@@ -1,6 +1,5 @@
-import { execFile } from "node:child_process";
-import { spawn, type ChildProcess } from "node:child_process";
-import { promisify } from "node:util";
+import type { ChildProcess } from "node:child_process";
+import crossSpawn from "cross-spawn";
 import type { AppConfig } from "./config.js";
 import { RunCancelledError } from "./errors.js";
 import type {
@@ -9,8 +8,6 @@ import type {
   RunnerRequest,
   RunnerResult,
 } from "./types.js";
-
-const execFileAsync = promisify(execFile);
 
 export interface ParsedEvents {
   messages: string[];
@@ -102,15 +99,15 @@ export class CodexRunner implements AgentRunner {
   constructor(private readonly config: AppConfig) {}
 
   async isAvailable(): Promise<boolean> {
-    try {
-      await execFileAsync(this.config.codexBin, ["--version"], {
+    return new Promise((resolve) => {
+      const child = crossSpawn(this.config.codexBin, ["--version"], {
         timeout: 5_000,
         env: this.childEnvironment(),
+        stdio: "ignore",
       });
-      return true;
-    } catch {
-      return false;
-    }
+      child.once("error", () => resolve(false));
+      child.once("close", (code) => resolve(code === 0));
+    });
   }
 
   async cancel(agentId: string): Promise<boolean> {
@@ -130,7 +127,7 @@ export class CodexRunner implements AgentRunner {
     }
 
     const args = buildCodexArgs(request, this.config.codexSandboxMode);
-    const child = spawn(this.config.codexBin, args, {
+    const child = crossSpawn(this.config.codexBin, args, {
       cwd: request.workspacePath,
       env: this.childEnvironment(),
       stdio: ["ignore", "pipe", "pipe"],
@@ -181,8 +178,8 @@ export class CodexRunner implements AgentRunner {
       }
     };
 
-    child.stdout.on("data", (chunk: Buffer) => consume(chunk, "stdout"));
-    child.stderr.on("data", (chunk: Buffer) => consume(chunk, "stderr"));
+    child.stdout!.on("data", (chunk: Buffer) => consume(chunk, "stdout"));
+    child.stderr!.on("data", (chunk: Buffer) => consume(chunk, "stderr"));
 
     const timeout = setTimeout(() => {
       active.timedOut = true;
