@@ -9,6 +9,7 @@ import type {
   AgentRunner,
   CreateAgentInput,
   Message,
+  RunTrace,
   UpdateAgentInput,
 } from "./types.js";
 import { WorkspaceManager } from "./workspace.js";
@@ -140,6 +141,16 @@ export class AgentService {
       throw new HttpError(404, "Run not found");
     }
     return run;
+  }
+
+  getRunTrace(runId: string): RunTrace {
+    const run = this.getRun(runId);
+    return {
+      runId: run.id,
+      agentId: run.agentId,
+      status: run.status,
+      spans: run.spans,
+    };
   }
 
   getRuns(agentId: string): AgentRun[] {

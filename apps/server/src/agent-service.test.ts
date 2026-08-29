@@ -99,6 +99,27 @@ describe("Agent lifecycle", () => {
     });
   });
 
+  it("exposes a Run's trace as a focused runId/agentId/status/spans view", async () => {
+    const service = await makeService();
+    const agent = await service.createAgent({ name: "Traced" });
+    const { run } = await service.sendMessage(agent.id, "trace me");
+    await expect.poll(() => service.getRun(run.id).status).toBe("completed");
+
+    const trace = service.getRunTrace(run.id);
+    expect(trace).toEqual({
+      runId: run.id,
+      agentId: agent.id,
+      status: "completed",
+      spans: service.getRun(run.id).spans,
+    });
+    expect(trace.spans).toHaveLength(1);
+  });
+
+  it("rejects a trace lookup for a Run that does not exist", async () => {
+    const service = await makeService();
+    expect(() => service.getRunTrace("00000000-0000-0000-0000-000000000000")).toThrow();
+  });
+
   it("leaves a failed run with no spans, since the Runtime error path does not report them yet", async () => {
     const service = await makeService({
       run: async () => {

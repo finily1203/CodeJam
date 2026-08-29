@@ -79,6 +79,13 @@ export interface RunSpan {
   detail: string | null;
 }
 
+export interface RunTrace {
+  runId: string;
+  agentId: string;
+  status: RunStatus;
+  spans: RunSpan[];
+}
+
 export interface RunnerResult {
   output: string;
   threadId: string | null;
