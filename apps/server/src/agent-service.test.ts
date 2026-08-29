@@ -14,6 +14,7 @@ class FakeRunner implements AgentRunner {
       output: "Completed: " + request.prompt,
       threadId: request.threadId ?? "fake-thread",
       usage: { inputTokens: 12, outputTokens: 5 },
+      spans: [],
     };
   }
   async cancel(): Promise<boolean> {
@@ -102,7 +103,7 @@ describe("Agent lifecycle", () => {
     expect(rejected).toMatchObject({ reason: { statusCode: 409 } });
     expect(service.getMessages(agent.id)).toHaveLength(1);
 
-    finish({ output: "done", threadId: "thread", usage: null });
+    finish({ output: "done", threadId: "thread", usage: null, spans: [] });
     const accepted = attempts.find((attempt) => attempt.status === "fulfilled");
     if (accepted?.status === "fulfilled") {
       await expect.poll(() => service.getRun(accepted.value.run.id).status).toBe("completed");
@@ -127,7 +128,7 @@ describe("Agent lifecycle", () => {
       statusCode: 409,
     });
 
-    finish({ output: "done", threadId: "thread", usage: null });
+    finish({ output: "done", threadId: "thread", usage: null, spans: [] });
     await expect.poll(() => service.getRun(run.id).status).toBe("completed");
   });
 });

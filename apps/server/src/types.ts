@@ -62,10 +62,25 @@ export interface UpdateAgentInput {
   instructions?: string | undefined;
 }
 
+export type SpanCategory = "model_call" | "tool_call" | "reasoning" | "error";
+export type SpanStatus = "running" | "completed" | "failed";
+
+export interface RunSpan {
+  id: string;
+  parentId: string | null;
+  category: SpanCategory;
+  label: string;
+  startedAt: string;
+  endedAt: string | null;
+  status: SpanStatus;
+  detail: string | null;
+}
+
 export interface RunnerResult {
   output: string;
   threadId: string | null;
   usage: RunUsage | null;
+  spans: RunSpan[];
 }
 
 export interface RunnerRequest {
