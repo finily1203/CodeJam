@@ -14,6 +14,18 @@ class FakeRunner implements AgentRunner {
       output: "Completed: " + request.prompt,
       threadId: request.threadId ?? "fake-thread",
       usage: { inputTokens: 12, outputTokens: 5 },
+      spans: [
+        {
+          id: "turn-0",
+          parentId: null,
+          category: "model_call",
+          label: "Model turn",
+          startedAt: "2026-01-01T00:00:00.000Z",
+          endedAt: "2026-01-01T00:00:01.000Z",
+          status: "completed",
+          detail: "Completed: " + request.prompt,
+        },
+      ],
     };
   }
   async cancel(): Promise<boolean> {
@@ -78,6 +90,48 @@ describe("Agent lifecycle", () => {
     expect(messages.map((message) => message.role)).toEqual(["user", "assistant"]);
     expect(messages[1]?.content).toContain("write hello world");
     expect(service.getAgent(agent.id).codexThreadId).toBe("fake-thread");
+
+    const completedRun = service.getRun(run.id);
+    expect(completedRun.spans).toHaveLength(1);
+    expect(completedRun.spans[0]).toMatchObject({
+      category: "model_call",
+      status: "completed",
+    });
+  });
+
+  it("exposes a Run's trace as a focused runId/agentId/status/spans view", async () => {
+    const service = await makeService();
+    const agent = await service.createAgent({ name: "Traced" });
+    const { run } = await service.sendMessage(agent.id, "trace me");
+    await expect.poll(() => service.getRun(run.id).status).toBe("completed");
+
+    const trace = service.getRunTrace(run.id);
+    expect(trace).toEqual({
+      runId: run.id,
+      agentId: agent.id,
+      status: "completed",
+      spans: service.getRun(run.id).spans,
+    });
+    expect(trace.spans).toHaveLength(1);
+  });
+
+  it("rejects a trace lookup for a Run that does not exist", async () => {
+    const service = await makeService();
+    expect(() => service.getRunTrace("00000000-0000-0000-0000-000000000000")).toThrow();
+  });
+
+  it("leaves a failed run with no spans, since the Runtime error path does not report them yet", async () => {
+    const service = await makeService({
+      run: async () => {
+        throw new Error("Codex exploded");
+      },
+      cancel: async () => false,
+      isAvailable: async () => true,
+    });
+    const agent = await service.createAgent({ name: "Flaky" });
+    const { run } = await service.sendMessage(agent.id, "do something");
+    await expect.poll(() => service.getRun(run.id).status).toBe("failed");
+    expect(service.getRun(run.id).spans).toEqual([]);
   });
 
   it("atomically accepts only one concurrent run per Agent", async () => {
@@ -102,7 +156,7 @@ describe("Agent lifecycle", () => {
     expect(rejected).toMatchObject({ reason: { statusCode: 409 } });
     expect(service.getMessages(agent.id)).toHaveLength(1);
 
-    finish({ output: "done", threadId: "thread", usage: null });
+    finish({ output: "done", threadId: "thread", usage: null, spans: [] });
     const accepted = attempts.find((attempt) => attempt.status === "fulfilled");
     if (accepted?.status === "fulfilled") {
       await expect.poll(() => service.getRun(accepted.value.run.id).status).toBe("completed");
@@ -127,7 +181,7 @@ describe("Agent lifecycle", () => {
       statusCode: 409,
     });
 
-    finish({ output: "done", threadId: "thread", usage: null });
+    finish({ output: "done", threadId: "thread", usage: null, spans: [] });
     await expect.poll(() => service.getRun(run.id).status).toBe("completed");
   });
 });

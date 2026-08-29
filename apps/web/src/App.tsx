@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, setAuthToken } from "./api";
-import type { Agent, AgentRun, Message, SystemInfo } from "./types";
+import type { Agent, AgentRun, Message, RunSpan, RunTrace, SystemInfo } from "./types";
 
 const starterPrompts = [
   "Create a small TypeScript CLI that prints a weather summary from sample JSON.",
@@ -35,6 +35,81 @@ function Spinner() {
   return <span className="spinner" aria-label="Loading" />;
 }
 
+const spanCategoryLabels: Record<RunSpan["category"], string> = {
+  model_call: "Model",
+  tool_call: "Tool",
+  reasoning: "Reasoning",
+  error: "Error",
+};
+
+function spanDuration(span: RunSpan): string {
+  if (!span.endedAt) return "…";
+  const ms = new Date(span.endedAt).getTime() - new Date(span.startedAt).getTime();
+  return ms < 1000 ? ms + "ms" : (ms / 1000).toFixed(1) + "s";
+}
+
+function TraceSpanRow({ span }: { span: RunSpan }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <li className={"trace-span trace-span-" + span.status}>
+      <button
+        className="trace-span-row"
+        onClick={() => setExpanded((value) => !value)}
+        disabled={!span.detail}
+      >
+        <span className={"trace-span-category trace-category-" + span.category}>
+          {spanCategoryLabels[span.category]}
+        </span>
+        <span className="trace-span-label">{span.label}</span>
+        <span className="trace-span-duration">{spanDuration(span)}</span>
+        <span className={"trace-span-status trace-status-" + span.status}>{span.status}</span>
+      </button>
+      {expanded && span.detail && <pre className="trace-span-detail">{span.detail}</pre>}
+    </li>
+  );
+}
+
+function TracePanel({
+  trace,
+  loading,
+  error,
+  onClose,
+}: {
+  trace: RunTrace | null;
+  loading: boolean;
+  error: string | null;
+  onClose: () => void;
+}) {
+  return (
+    <section className="trace-panel">
+      <div className="trace-panel-header">
+        <span className="eyebrow">Middleware evidence</span>
+        <h3>Run trace{trace ? " · " + trace.status : ""}</h3>
+        <button className="trace-panel-close" onClick={onClose} aria-label="Close trace">
+          ×
+        </button>
+      </div>
+      {loading && (
+        <div className="trace-panel-loading">
+          <Spinner /> Loading trace…
+        </div>
+      )}
+      {error && <div className="error-banner" role="alert">{error}</div>}
+      {trace && !loading && (
+        <ol className="trace-span-list">
+          {trace.spans.length === 0 ? (
+            <li className="trace-empty">
+              No spans recorded for this Run{trace.status === "failed" ? " — it failed before the Runtime reported any events." : "."}
+            </li>
+          ) : (
+            trace.spans.map((span) => <TraceSpanRow key={span.id} span={span} />)
+          )}
+        </ol>
+      )}
+    </section>
+  );
+}
+
 export default function App() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -49,11 +124,17 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState<boolean | null>(null);
   const [authInput, setAuthInput] = useState("");
+  const [traceRunId, setTraceRunId] = useState<string | null>(null);
+  const [trace, setTrace] = useState<RunTrace | null>(null);
+  const [traceLoading, setTraceLoading] = useState(false);
+  const [traceError, setTraceError] = useState<string | null>(null);
   const messageEnd = useRef<HTMLDivElement>(null);
   const selectedIdRef = useRef<string | null>(null);
+  const traceRunIdRef = useRef<string | null>(null);
   const mountedRef = useRef(true);
   const pollingRunIds = useRef(new Set<string>());
   selectedIdRef.current = selectedId;
+  traceRunIdRef.current = traceRunId;
 
   const selected = useMemo(
     () => agents.find((agent) => agent.id === selectedId) ?? null,
@@ -99,6 +180,9 @@ export default function App() {
   useEffect(() => {
     setActiveRun(null);
     setShowSettings(false);
+    setTraceRunId(null);
+    setTrace(null);
+    setTraceError(null);
     if (!selectedId) {
       setMessages([]);
       return;
@@ -217,6 +301,29 @@ export default function App() {
       }
     } finally {
       pollingRunIds.current.delete(runId);
+    }
+  };
+
+  const viewTrace = async (runId: string) => {
+    if (traceRunId === runId) {
+      setTraceRunId(null);
+      setTrace(null);
+      setTraceError(null);
+      return;
+    }
+    setTraceRunId(runId);
+    setTrace(null);
+    setTraceError(null);
+    setTraceLoading(true);
+    try {
+      const result = await api.trace(runId);
+      if (traceRunIdRef.current === runId) setTrace(result);
+    } catch (reason) {
+      if (traceRunIdRef.current === runId) {
+        setTraceError(reason instanceof Error ? reason.message : String(reason));
+      }
+    } finally {
+      if (traceRunIdRef.current === runId) setTraceLoading(false);
     }
   };
 
@@ -515,6 +622,14 @@ export default function App() {
                       <div className="message-meta">
                         <strong>{message.role === "user" ? "You" : selected.name}</strong>
                         <span>{formatTime(message.createdAt)}</span>
+                        {message.role === "assistant" && (
+                          <button
+                            className="trace-trigger"
+                            onClick={() => viewTrace(message.runId)}
+                          >
+                            {traceRunId === message.runId ? "Hide trace" : "View trace"}
+                          </button>
+                        )}
                       </div>
                       <div className="message-body">{message.content}</div>
                     </article>
@@ -536,10 +651,26 @@ export default function App() {
                   <article className="run-error">
                     <strong>Run failed</strong>
                     <span>{activeRun.error}</span>
+                    <button className="trace-trigger" onClick={() => viewTrace(activeRun.id)}>
+                      {traceRunId === activeRun.id ? "Hide trace" : "View trace"}
+                    </button>
                   </article>
                 )}
                 <div ref={messageEnd} />
               </div>
+
+              {traceRunId && (
+                <TracePanel
+                  trace={trace}
+                  loading={traceLoading}
+                  error={traceError}
+                  onClose={() => {
+                    setTraceRunId(null);
+                    setTrace(null);
+                    setTraceError(null);
+                  }}
+                />
+              )}
 
               <form className="composer" onSubmit={sendMessage}>
                 <textarea

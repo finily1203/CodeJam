@@ -38,6 +38,27 @@ export interface AgentRun {
   createdAt: string;
 }
 
+export type SpanCategory = "model_call" | "tool_call" | "reasoning" | "error";
+export type SpanStatus = "running" | "completed" | "failed";
+
+export interface RunSpan {
+  id: string;
+  parentId: string | null;
+  category: SpanCategory;
+  label: string;
+  startedAt: string;
+  endedAt: string | null;
+  status: SpanStatus;
+  detail: string | null;
+}
+
+export interface RunTrace {
+  runId: string;
+  agentId: string;
+  status: RunStatus;
+  spans: RunSpan[];
+}
+
 export interface SystemInfo {
   arkConfigured: boolean;
   arkBaseUrl: string;
