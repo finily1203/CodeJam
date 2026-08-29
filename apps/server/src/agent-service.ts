@@ -9,6 +9,7 @@ import type {
   AgentRunner,
   CreateAgentInput,
   Message,
+  RunTrace,
   UpdateAgentInput,
 } from "./types.js";
 import { WorkspaceManager } from "./workspace.js";
@@ -142,6 +143,16 @@ export class AgentService {
     return run;
   }
 
+  getRunTrace(runId: string): RunTrace {
+    const run = this.getRun(runId);
+    return {
+      runId: run.id,
+      agentId: run.agentId,
+      status: run.status,
+      spans: run.spans,
+    };
+  }
+
   getRuns(agentId: string): AgentRun[] {
     this.getAgent(agentId);
     return this.store
@@ -174,6 +185,7 @@ export class AgentService {
       output: null,
       error: null,
       usage: null,
+      spans: [],
       startedAt: null,
       completedAt: null,
       createdAt: timestamp,
@@ -262,6 +274,7 @@ export class AgentService {
         storedRun.status = "completed";
         storedRun.output = result.output;
         storedRun.usage = result.usage;
+        storedRun.spans = result.spans;
         storedRun.completedAt = completedAt;
         database.messages.push({
           id: randomUUID(),

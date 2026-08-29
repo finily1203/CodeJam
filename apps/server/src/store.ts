@@ -1,34 +1,13 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { Database } from "./types.js";
+import { DATABASE_VERSION, type Database } from "./types.js";
 
 const emptyDatabase = (): Database => ({
-  version: 1,
+  version: DATABASE_VERSION,
   agents: [],
   messages: [],
   runs: [],
-  spans: [],
 });
-
-/**
- * Backfill fields introduced by the trace middleware so stores written by the
- * baseline keep loading. Runs created before tracing existed adopt their own
- * id as the trace id, which keeps every Run addressable by exactly one trace.
- */
-const backfill = (database: Database): Database => {
-  if (!Array.isArray(database.runs)) {
-    database.runs = [];
-  }
-  if (!Array.isArray(database.spans)) {
-    database.spans = [];
-  }
-  for (const run of database.runs) {
-    if (!run.traceId) {
-      run.traceId = run.id;
-    }
-  }
-  return database;
-};
 
 export class JsonStore {
   private data: Database = emptyDatabase();
@@ -40,11 +19,29 @@ export class JsonStore {
     await mkdir(path.dirname(this.filePath), { recursive: true });
     try {
       const raw = await readFile(this.filePath, "utf8");
-      const parsed = JSON.parse(raw) as Database;
-      if (parsed.version !== 1 || !Array.isArray(parsed.agents)) {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      if (
+        !Array.isArray(parsed.agents) ||
+        !Array.isArray(parsed.messages) ||
+        !Array.isArray(parsed.runs)
+      ) {
         throw new Error("Unsupported database format");
       }
-      this.data = backfill(parsed);
+      let migrated = false;
+      if (parsed.version === 1) {
+        for (const run of parsed.runs as Array<Record<string, unknown>>) {
+          if (!Array.isArray(run.spans)) run.spans = [];
+        }
+        parsed.version = DATABASE_VERSION;
+        migrated = true;
+      }
+      if (parsed.version !== DATABASE_VERSION) {
+        throw new Error("Unsupported database format");
+      }
+      this.data = parsed as unknown as Database;
+      if (migrated) {
+        await this.persist();
+      }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         throw error;

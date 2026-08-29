@@ -86,13 +86,16 @@ export interface AgentRun {
   output: string | null;
   error: string | null;
   usage: RunUsage | null;
+  spans: RunSpan[];
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
 }
 
+export const DATABASE_VERSION = 2;
+
 export interface Database {
-  version: 1;
+  version: typeof DATABASE_VERSION;
   agents: Agent[];
   messages: Message[];
   runs: AgentRun[];
@@ -111,10 +114,32 @@ export interface UpdateAgentInput {
   instructions?: string | undefined;
 }
 
+export type SpanCategory = "model_call" | "tool_call" | "reasoning" | "error";
+export type SpanStatus = "running" | "completed" | "failed";
+
+export interface RunSpan {
+  id: string;
+  parentId: string | null;
+  category: SpanCategory;
+  label: string;
+  startedAt: string;
+  endedAt: string | null;
+  status: SpanStatus;
+  detail: string | null;
+}
+
+export interface RunTrace {
+  runId: string;
+  agentId: string;
+  status: RunStatus;
+  spans: RunSpan[];
+}
+
 export interface RunnerResult {
   output: string;
   threadId: string | null;
   usage: RunUsage | null;
+  spans: RunSpan[];
 }
 
 export interface RunnerRequest {

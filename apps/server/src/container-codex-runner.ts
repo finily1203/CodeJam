@@ -1,14 +1,14 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import type { AppConfig } from "./config.js";
-import { buildCodexArgs, parseCodexEventLine } from "./codex-runner.js";
+import {
+  buildCodexArgs,
+  closeDanglingSpans,
+  parseCodexEventLine,
+  type ParsedEvents,
+} from "./codex-runner.js";
 import { RunCancelledError } from "./errors.js";
-import type {
-  AgentRunner,
-  RunUsage,
-  RunnerRequest,
-  RunnerResult,
-} from "./types.js";
+import type { AgentRunner, RunnerRequest, RunnerResult } from "./types.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -20,13 +20,6 @@ interface ActiveContainer {
   outputExceeded: boolean;
   settled: Promise<void>;
   termination: Promise<void> | null;
-}
-
-interface ParsedEvents {
-  messages: string[];
-  threadId: string | null;
-  usage: RunUsage | null;
-  errors: string[];
 }
 
 export function containerName(agentId: string, instanceId = "default"): string {
@@ -171,6 +164,7 @@ export class ContainerCodexRunner implements AgentRunner {
       threadId: request.threadId,
       usage: null,
       errors: [],
+      spans: [],
     };
     let stdout = "";
     let stderr = "";
@@ -228,7 +222,8 @@ export class ContainerCodexRunner implements AgentRunner {
       }
       const output = parsed.messages.at(-1)?.trim();
       if (!output) throw new Error("Codex completed without an agent message");
-      return { output, threadId: parsed.threadId, usage: parsed.usage };
+      closeDanglingSpans(parsed.spans, new Date().toISOString());
+      return { output, threadId: parsed.threadId, usage: parsed.usage, spans: parsed.spans };
     } finally {
       clearTimeout(timeout);
       this.active.delete(request.agentId);

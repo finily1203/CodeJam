@@ -4,6 +4,7 @@ import type { AppConfig } from "./config.js";
 import { RunCancelledError } from "./errors.js";
 import type {
   AgentRunner,
+  RunSpan,
   RunUsage,
   RunnerRequest,
   RunnerResult,
@@ -14,6 +15,27 @@ export interface ParsedEvents {
   threadId: string | null;
   usage: RunUsage | null;
   errors: string[];
+  spans: RunSpan[];
+}
+
+const MAX_SPAN_DETAIL_LENGTH = 2_000;
+
+function truncate(value: string, max = MAX_SPAN_DETAIL_LENGTH): string {
+  return value.length > max ? value.slice(0, max) + " …(truncated)" : value;
+}
+
+function openModelCallSpan(spans: RunSpan[]): RunSpan | undefined {
+  return [...spans].reverse().find((span) => span.category === "model_call" && span.endedAt === null);
+}
+
+export function closeDanglingSpans(spans: RunSpan[], endedAt: string): void {
+  for (const span of spans) {
+    if (span.endedAt === null) {
+      span.endedAt = endedAt;
+      span.status = "failed";
+      span.detail = span.detail ?? "Run ended before this step reported completion";
+    }
+  }
 }
 
 export function buildCodexArgs(
@@ -45,31 +67,113 @@ export function parseCodexEventLine(line: string, parsed: ParsedEvents): void {
   } catch {
     return;
   }
+  const now = new Date().toISOString();
 
   if (event.type === "thread.started" && typeof event.thread_id === "string") {
     parsed.threadId = event.thread_id;
   }
 
-  if (event.type === "item.completed" && event.item && typeof event.item === "object") {
+  if (event.type === "turn.started") {
+    parsed.spans.push({
+      id: "turn-" + parsed.spans.length,
+      parentId: null,
+      category: "model_call",
+      label: "Model turn",
+      startedAt: now,
+      endedAt: null,
+      status: "running",
+      detail: null,
+    });
+  }
+
+  if (event.type === "item.started" && event.item && typeof event.item === "object") {
     const item = event.item as Record<string, unknown>;
-    if (item.type === "agent_message" && typeof item.text === "string") {
-      parsed.messages.push(item.text);
+    if (item.type === "command_execution") {
+      const itemId = typeof item.id === "string" ? item.id : "tool-" + parsed.spans.length;
+      const parentTurn = openModelCallSpan(parsed.spans);
+      parsed.spans.push({
+        id: itemId,
+        parentId: parentTurn?.id ?? null,
+        category: "tool_call",
+        label:
+          typeof item.command === "string"
+            ? truncate(item.command, 200)
+            : "command execution",
+        startedAt: now,
+        endedAt: null,
+        status: "running",
+        detail: null,
+      });
     }
   }
 
-  if (event.type === "turn.completed" && event.usage && typeof event.usage === "object") {
-    const usage = event.usage as Record<string, unknown>;
-    parsed.usage = {
-      ...(typeof usage.input_tokens === "number"
-        ? { inputTokens: usage.input_tokens }
-        : {}),
-      ...(typeof usage.cached_input_tokens === "number"
-        ? { cachedInputTokens: usage.cached_input_tokens }
-        : {}),
-      ...(typeof usage.output_tokens === "number"
-        ? { outputTokens: usage.output_tokens }
-        : {}),
-    };
+  if (event.type === "item.completed" && event.item && typeof event.item === "object") {
+    const item = event.item as Record<string, unknown>;
+    const itemId = typeof item.id === "string" ? item.id : undefined;
+    const parentTurn = openModelCallSpan(parsed.spans);
+
+    if (item.type === "agent_message" && typeof item.text === "string") {
+      parsed.messages.push(item.text);
+      if (parentTurn) {
+        parentTurn.detail = truncate(item.text);
+      }
+    }
+
+    const existing = itemId ? parsed.spans.find((span) => span.id === itemId) : undefined;
+    if (existing) {
+      existing.endedAt = now;
+      existing.status = item.status === "failed" ? "failed" : "completed";
+      if (typeof item.aggregated_output === "string") {
+        existing.detail = truncate(item.aggregated_output);
+      }
+    } else if (item.type === "reasoning" && typeof item.text === "string") {
+      parsed.spans.push({
+        id: itemId ?? "reasoning-" + parsed.spans.length,
+        parentId: parentTurn?.id ?? null,
+        category: "reasoning",
+        label: "Reasoning",
+        startedAt: now,
+        endedAt: now,
+        status: "completed",
+        detail: truncate(item.text),
+      });
+    } else if (item.type === "error") {
+      const message =
+        typeof item.message === "string" ? item.message : "Item reported an error";
+      parsed.errors.push(message);
+      parsed.spans.push({
+        id: itemId ?? "item-error-" + parsed.spans.length,
+        parentId: parentTurn?.id ?? null,
+        category: "error",
+        label: "Item error",
+        startedAt: now,
+        endedAt: now,
+        status: "failed",
+        detail: truncate(message),
+      });
+    }
+  }
+
+  if (event.type === "turn.completed") {
+    if (event.usage && typeof event.usage === "object") {
+      const usage = event.usage as Record<string, unknown>;
+      parsed.usage = {
+        ...(typeof usage.input_tokens === "number"
+          ? { inputTokens: usage.input_tokens }
+          : {}),
+        ...(typeof usage.cached_input_tokens === "number"
+          ? { cachedInputTokens: usage.cached_input_tokens }
+          : {}),
+        ...(typeof usage.output_tokens === "number"
+          ? { outputTokens: usage.output_tokens }
+          : {}),
+      };
+    }
+    const openTurn = openModelCallSpan(parsed.spans);
+    if (openTurn) {
+      openTurn.endedAt = now;
+      openTurn.status = "completed";
+    }
   }
 
   if (event.type === "error") {
@@ -80,6 +184,16 @@ export function parseCodexEventLine(line: string, parsed: ParsedEvents): void {
           ? event.error
           : "Codex reported an unknown error";
     parsed.errors.push(message);
+    parsed.spans.push({
+      id: "run-error-" + parsed.spans.length,
+      parentId: null,
+      category: "error",
+      label: "Runtime error",
+      startedAt: now,
+      endedAt: now,
+      status: "failed",
+      detail: truncate(message),
+    });
   }
 }
 
@@ -151,6 +265,7 @@ export class CodexRunner implements AgentRunner {
       threadId: request.threadId,
       usage: null,
       errors: [],
+      spans: [],
     };
     let stdout = "";
     let stderr = "";
@@ -212,10 +327,12 @@ export class CodexRunner implements AgentRunner {
       if (!output) {
         throw new Error("Codex completed without an agent message");
       }
+      closeDanglingSpans(parsed.spans, new Date().toISOString());
       return {
         output,
         threadId: parsed.threadId,
         usage: parsed.usage,
+        spans: parsed.spans,
       };
     } finally {
       clearTimeout(timeout);
