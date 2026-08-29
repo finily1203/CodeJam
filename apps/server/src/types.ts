@@ -38,13 +38,16 @@ export interface AgentRun {
   output: string | null;
   error: string | null;
   usage: RunUsage | null;
+  spans: RunSpan[];
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
 }
 
+export const DATABASE_VERSION = 2;
+
 export interface Database {
-  version: 1;
+  version: typeof DATABASE_VERSION;
   agents: Agent[];
   messages: Message[];
   runs: AgentRun[];

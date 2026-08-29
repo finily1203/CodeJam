@@ -170,6 +170,7 @@ export class AgentService {
       output: null,
       error: null,
       usage: null,
+      spans: [],
       startedAt: null,
       completedAt: null,
       createdAt: timestamp,
@@ -258,6 +259,7 @@ export class AgentService {
         storedRun.status = "completed";
         storedRun.output = result.output;
         storedRun.usage = result.usage;
+        storedRun.spans = result.spans;
         storedRun.completedAt = completedAt;
         database.messages.push({
           id: randomUUID(),

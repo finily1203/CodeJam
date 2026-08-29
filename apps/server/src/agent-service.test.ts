@@ -14,7 +14,18 @@ class FakeRunner implements AgentRunner {
       output: "Completed: " + request.prompt,
       threadId: request.threadId ?? "fake-thread",
       usage: { inputTokens: 12, outputTokens: 5 },
-      spans: [],
+      spans: [
+        {
+          id: "turn-0",
+          parentId: null,
+          category: "model_call",
+          label: "Model turn",
+          startedAt: "2026-01-01T00:00:00.000Z",
+          endedAt: "2026-01-01T00:00:01.000Z",
+          status: "completed",
+          detail: "Completed: " + request.prompt,
+        },
+      ],
     };
   }
   async cancel(): Promise<boolean> {
@@ -79,6 +90,27 @@ describe("Agent lifecycle", () => {
     expect(messages.map((message) => message.role)).toEqual(["user", "assistant"]);
     expect(messages[1]?.content).toContain("write hello world");
     expect(service.getAgent(agent.id).codexThreadId).toBe("fake-thread");
+
+    const completedRun = service.getRun(run.id);
+    expect(completedRun.spans).toHaveLength(1);
+    expect(completedRun.spans[0]).toMatchObject({
+      category: "model_call",
+      status: "completed",
+    });
+  });
+
+  it("leaves a failed run with no spans, since the Runtime error path does not report them yet", async () => {
+    const service = await makeService({
+      run: async () => {
+        throw new Error("Codex exploded");
+      },
+      cancel: async () => false,
+      isAvailable: async () => true,
+    });
+    const agent = await service.createAgent({ name: "Flaky" });
+    const { run } = await service.sendMessage(agent.id, "do something");
+    await expect.poll(() => service.getRun(run.id).status).toBe("failed");
+    expect(service.getRun(run.id).spans).toEqual([]);
   });
 
   it("atomically accepts only one concurrent run per Agent", async () => {
