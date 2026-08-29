@@ -162,9 +162,13 @@ export class AgentService {
     }
     const timestamp = now();
     const runId = randomUUID();
+    // One Run is one trace. Every Span emitted while this Run executes carries
+    // this id, which is what lets the timeline be reassembled from flat rows.
+    const traceId = randomUUID();
     const run: AgentRun = {
       id: runId,
       agentId,
+      traceId,
       status: "queued",
       prompt,
       output: null,

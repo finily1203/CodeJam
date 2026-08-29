@@ -7,7 +7,28 @@ const emptyDatabase = (): Database => ({
   agents: [],
   messages: [],
   runs: [],
+  spans: [],
 });
+
+/**
+ * Backfill fields introduced by the trace middleware so stores written by the
+ * baseline keep loading. Runs created before tracing existed adopt their own
+ * id as the trace id, which keeps every Run addressable by exactly one trace.
+ */
+const backfill = (database: Database): Database => {
+  if (!Array.isArray(database.runs)) {
+    database.runs = [];
+  }
+  if (!Array.isArray(database.spans)) {
+    database.spans = [];
+  }
+  for (const run of database.runs) {
+    if (!run.traceId) {
+      run.traceId = run.id;
+    }
+  }
+  return database;
+};
 
 export class JsonStore {
   private data: Database = emptyDatabase();
@@ -23,7 +44,7 @@ export class JsonStore {
       if (parsed.version !== 1 || !Array.isArray(parsed.agents)) {
         throw new Error("Unsupported database format");
       }
-      this.data = parsed;
+      this.data = backfill(parsed);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         throw error;

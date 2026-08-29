@@ -2,6 +2,26 @@ export type AgentStatus = "ready" | "busy" | "stopped" | "error";
 export type RunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 export type MessageRole = "user" | "assistant";
 
+/**
+ * Trace middleware. A Run is one trace; every step inside it is a Span.
+ * Categories map onto the Codex `exec --json` event stream. The baseline
+ * parser keeps only `agent_message`, so every other category below is
+ * information the platform already receives and currently discards.
+ */
+export type SpanCategory =
+  | "orchestration"
+  | "reasoning"
+  | "model_call"
+  | "command_execution"
+  | "file_change"
+  | "tool_call"
+  | "web_search"
+  | "error";
+
+export type SpanStatus = "running" | "ok" | "error" | "cancelled";
+
+export type SpanActor = "human" | "agent" | "system";
+
 export interface Agent {
   id: string;
   name: string;
@@ -30,9 +50,37 @@ export interface RunUsage {
   outputTokens?: number;
 }
 
+/**
+ * One step inside a Run. Spans of a Run share a `traceId` and nest through
+ * `parentSpanId`, which is what turns a flat log into a navigable tree.
+ *
+ * `inputSummary` and `outputSummary` are redacted and truncated before they
+ * reach the store; raw payloads are never persisted.
+ */
+export interface Span {
+  id: string;
+  traceId: string;
+  parentSpanId: string | null;
+  runId: string;
+  agentId: string;
+  actor: SpanActor;
+  category: SpanCategory;
+  name: string;
+  status: SpanStatus;
+  startedAt: string;
+  completedAt: string | null;
+  durationMs: number | null;
+  error: string | null;
+  inputSummary: string | null;
+  outputSummary: string | null;
+  usage: RunUsage | null;
+  metadata: Record<string, string> | null;
+}
+
 export interface AgentRun {
   id: string;
   agentId: string;
+  traceId: string;
   status: RunStatus;
   prompt: string;
   output: string | null;
@@ -48,6 +96,7 @@ export interface Database {
   agents: Agent[];
   messages: Message[];
   runs: AgentRun[];
+  spans: Span[];
 }
 
 export interface CreateAgentInput {
