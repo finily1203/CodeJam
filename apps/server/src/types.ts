@@ -228,6 +228,12 @@ export interface ExplainTraceInput {
   spans: RunSpan[];
 }
 
+export interface ExplainResult {
+  text: string;
+  /** Token usage for the explain call itself, so its cost can be tracked against the Agent's spend - a real Ark call, not a free UI affordance. */
+  usage: RunUsage | null;
+}
+
 export interface TraceExplainer {
-  explain(input: ExplainTraceInput): Promise<string>;
+  explain(input: ExplainTraceInput): Promise<ExplainResult>;
 }

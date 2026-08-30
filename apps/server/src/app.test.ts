@@ -43,8 +43,8 @@ class FakeTracingRunner implements AgentRunner {
 }
 
 class FakeExplainer implements TraceExplainer {
-  async explain(input: ExplainTraceInput): Promise<string> {
-    return "Fake explanation for " + input.agentName;
+  async explain(input: ExplainTraceInput): Promise<{ text: string; usage: null }> {
+    return { text: "Fake explanation for " + input.agentName, usage: null };
   }
 }
 
