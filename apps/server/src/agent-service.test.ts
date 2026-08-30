@@ -11,6 +11,7 @@ import type {
   ExplainTraceInput,
   RunnerRequest,
   RunnerResult,
+  RunUsage,
   TraceExplainer,
 } from "./types.js";
 import { WorkspaceManager } from "./workspace.js";
@@ -45,9 +46,12 @@ class FakeRunner implements AgentRunner {
 
 class FakeExplainer implements TraceExplainer {
   calls: ExplainTraceInput[] = [];
-  async explain(input: ExplainTraceInput): Promise<string> {
+  async explain(input: ExplainTraceInput): Promise<{ text: string; usage: RunUsage }> {
     this.calls.push(input);
-    return "Explanation #" + this.calls.length + " for " + input.agentName;
+    return {
+      text: "Explanation #" + this.calls.length + " for " + input.agentName,
+      usage: { inputTokens: 40, outputTokens: 60 },
+    };
   }
 }
 
@@ -341,6 +345,8 @@ describe("Agent lifecycle", () => {
     expect(service.getRun(run.id).explanation).toBeNull();
     expect(service.getRunTrace(run.id).explanation).toBeNull();
 
+    const spendBeforeExplain = service.getAgent(agent.id).totalSpendUsd;
+
     const explained = await service.explainRun(run.id);
     expect(explained.explanation).toBe("Explanation #1 for Explained");
     expect(explainer.calls).toHaveLength(1);
@@ -349,12 +355,17 @@ describe("Agent lifecycle", () => {
       status: "completed",
       prompt: "explain me",
     });
+    // The explain call itself is a real Ark call and costs real tokens
+    // (40 in / 60 out here), so it must count against the Agent's spend.
+    expect(service.getAgent(agent.id).totalSpendUsd).toBeCloseTo(spendBeforeExplain + 0.00011, 6);
 
-    // Cached: a second call must not invoke the explainer again.
+    // Cached: a second call must not invoke the explainer again, and must
+    // not charge the Agent a second time for the same explanation.
     const again = await service.explainRun(run.id);
     expect(again.explanation).toBe("Explanation #1 for Explained");
     expect(explainer.calls).toHaveLength(1);
     expect(service.getRunTrace(run.id).explanation).toBe("Explanation #1 for Explained");
+    expect(service.getAgent(agent.id).totalSpendUsd).toBeCloseTo(spendBeforeExplain + 0.00011, 6);
   });
 
   it("rejects explaining a Run that is still in progress", async () => {

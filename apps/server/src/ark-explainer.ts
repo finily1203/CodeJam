@@ -1,5 +1,5 @@
 import type { AppConfig } from "./config.js";
-import type { ExplainTraceInput, RunUsage, TraceExplainer } from "./types.js";
+import type { ExplainResult, ExplainTraceInput, RunUsage, TraceExplainer } from "./types.js";
 
 function formatUsage(usage: RunUsage | null): string {
   if (!usage) return "unknown";
@@ -56,6 +56,28 @@ function extractOutputText(data: Record<string, unknown>): string {
   return parts.join(" ").trim();
 }
 
+function extractUsage(data: Record<string, unknown>): RunUsage | null {
+  const usage = data.usage;
+  if (!usage || typeof usage !== "object") return null;
+  const record = usage as Record<string, unknown>;
+  const inputTokens = typeof record.input_tokens === "number" ? record.input_tokens : undefined;
+  const outputTokens =
+    typeof record.output_tokens === "number" ? record.output_tokens : undefined;
+  if (inputTokens === undefined && outputTokens === undefined) return null;
+  const details = record.input_tokens_details;
+  const cachedInputTokens =
+    details &&
+    typeof details === "object" &&
+    typeof (details as Record<string, unknown>).cached_tokens === "number"
+      ? ((details as Record<string, unknown>).cached_tokens as number)
+      : undefined;
+  const result: RunUsage = {};
+  if (inputTokens !== undefined) result.inputTokens = inputTokens;
+  if (outputTokens !== undefined) result.outputTokens = outputTokens;
+  if (cachedInputTokens !== undefined) result.cachedInputTokens = cachedInputTokens;
+  return result;
+}
+
 /**
  * Calls Volcengine Ark's OpenAI-compatible Responses API directly - a
  * single lightweight completion, not a Codex Agent run - to turn a Run's
@@ -64,7 +86,7 @@ function extractOutputText(data: Record<string, unknown>): string {
 export class ArkTraceExplainer implements TraceExplainer {
   constructor(private readonly config: AppConfig) {}
 
-  async explain(input: ExplainTraceInput): Promise<string> {
+  async explain(input: ExplainTraceInput): Promise<ExplainResult> {
     const response = await fetch(this.config.arkBaseUrl + "/responses", {
       method: "POST",
       headers: {
@@ -96,6 +118,6 @@ export class ArkTraceExplainer implements TraceExplainer {
         "Ark explain request returned no text (status: " + String(data.status) + ")",
       );
     }
-    return text;
+    return { text, usage: extractUsage(data) };
   }
 }

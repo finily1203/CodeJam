@@ -248,7 +248,7 @@ export class AgentService {
       run.startedAt && run.completedAt
         ? new Date(run.completedAt).getTime() - new Date(run.startedAt).getTime()
         : null;
-    const explanation = await this.explainer.explain({
+    const { text: explanation, usage: explainUsage } = await this.explainer.explain({
       agentName: agent?.name ?? "Unknown Agent",
       status: run.status,
       prompt: run.prompt,
@@ -259,15 +259,27 @@ export class AgentService {
       durationMs,
       spans: run.spans,
     });
+    // A real Ark call, not a free UI affordance - its cost counts against
+    // the Agent's spend just like a Run's cost does, even though it isn't
+    // itself gated by the budget check (explaining a Run you already paid
+    // for shouldn't become permanently unavailable once the budget is hit).
+    const explainCostUsd = estimateCostUsd(explainUsage, this.currentCostRates());
     return this.store.mutate((database) => {
       const stored = database.runs.find((item) => item.id === runId);
       if (!stored) {
         throw new HttpError(404, "Run not found");
       }
       // Another request may have generated (and cached) an explanation
-      // while this Ark call was in flight - keep whichever landed first
-      // rather than overwriting it.
-      stored.explanation ??= explanation;
+      // while this Ark call was in flight - keep whichever landed first,
+      // and only charge the Agent for the call that actually won the race.
+      if (!stored.explanation) {
+        stored.explanation = explanation;
+        const storedAgent = database.agents.find((item) => item.id === stored.agentId);
+        if (storedAgent && explainCostUsd !== null) {
+          storedAgent.totalSpendUsd += explainCostUsd;
+          storedAgent.updatedAt = now();
+        }
+      }
       return structuredClone(stored);
     });
   }
