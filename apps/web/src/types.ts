@@ -101,6 +101,21 @@ export interface RunUsage {
   outputTokens?: number;
 }
 
+export interface RunVersionSnapshot {
+  name: string;
+  description: string;
+  instructions: string;
+}
+
+export interface RunVersionDiff {
+  version: number;
+  changedFields: string[];
+  snapshot: RunVersionSnapshot | null;
+  previousVersion: number | null;
+  previousSnapshot: RunVersionSnapshot | null;
+  currentAgentVersion: number;
+}
+
 export interface RunTrace {
   runId: string;
   agentId: string;
@@ -111,6 +126,7 @@ export interface RunTrace {
   environment: RunEnvironment | null;
   estimatedCostUsd: number | null;
   agentVersion: number;
+  versionDiff: RunVersionDiff | null;
   spans: RunSpan[];
 }
 

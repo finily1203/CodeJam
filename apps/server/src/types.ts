@@ -151,6 +151,28 @@ export interface RunSpan {
   detail: string | null;
 }
 
+export interface RunVersionSnapshot {
+  name: string;
+  description: string;
+  instructions: string;
+}
+
+/**
+ * Connects this Run's captured agentVersion to the Agent's version history,
+ * so the trace panel can show "this Run used vN (changed: X)" and let a
+ * viewer see what the previous version looked like without leaving the
+ * trace. previousSnapshot is null when no earlier version was ever recorded
+ * (the Run used v1, or predates version history entirely).
+ */
+export interface RunVersionDiff {
+  version: number;
+  changedFields: string[];
+  snapshot: RunVersionSnapshot | null;
+  previousVersion: number | null;
+  previousSnapshot: RunVersionSnapshot | null;
+  currentAgentVersion: number;
+}
+
 export interface RunTrace {
   runId: string;
   agentId: string;
@@ -161,6 +183,7 @@ export interface RunTrace {
   environment: RunEnvironment | null;
   estimatedCostUsd: number | null;
   agentVersion: number;
+  versionDiff: RunVersionDiff | null;
   spans: RunSpan[];
 }
 

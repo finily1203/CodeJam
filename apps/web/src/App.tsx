@@ -8,6 +8,7 @@ import type {
   Message,
   RunSpan,
   RunTrace,
+  RunVersionSnapshot,
   SystemInfo,
 } from "./types";
 
@@ -189,6 +190,67 @@ function TraceSpanTree({
   );
 }
 
+function versionFieldValue(snapshot: RunVersionSnapshot, field: string): string {
+  if (field === "name") return snapshot.name;
+  if (field === "description") return snapshot.description;
+  if (field === "instructions") return snapshot.instructions;
+  return "";
+}
+
+function VersionDiffBanner({ trace }: { trace: RunTrace }) {
+  const [expanded, setExpanded] = useState(false);
+  const diff = trace.versionDiff;
+  if (!diff) return null;
+
+  const isStale = diff.currentAgentVersion !== diff.version;
+  const hasComparison = diff.changedFields.length > 0 && diff.previousSnapshot != null;
+  if (!hasComparison && !isStale) return null;
+
+  return (
+    <div className="version-diff-banner">
+      <button
+        className="version-diff-toggle"
+        onClick={() => setExpanded((value) => !value)}
+        disabled={!hasComparison}
+      >
+        <span className="version-diff-summary-text">
+          This Run used v{diff.version}
+          {hasComparison && <> (changed: {diff.changedFields.join(", ")})</>}
+          {isStale && <> · Agent is now on v{diff.currentAgentVersion}</>}
+        </span>
+        {hasComparison && (
+          <span className="version-diff-caret">
+            {expanded ? "▾" : "▸"} Compare to v{diff.previousVersion}
+          </span>
+        )}
+      </button>
+      {expanded && hasComparison && diff.snapshot && diff.previousSnapshot && (
+        <div className="version-diff-columns">
+          {diff.changedFields.map((field) => (
+            <div className="version-diff-field" key={field}>
+              <span className="version-diff-field-label">{field}</span>
+              <div className="version-diff-sides">
+                <div className="version-diff-side">
+                  <span className="version-diff-side-label">v{diff.previousVersion}</span>
+                  <pre className="version-diff-old">
+                    {versionFieldValue(diff.previousSnapshot!, field) || "(empty)"}
+                  </pre>
+                </div>
+                <div className="version-diff-side">
+                  <span className="version-diff-side-label">v{diff.version}</span>
+                  <pre className="version-diff-new">
+                    {versionFieldValue(diff.snapshot!, field) || "(empty)"}
+                  </pre>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TracePanel({
   trace,
   loading,
@@ -310,6 +372,7 @@ function TracePanel({
           </div>
         )}
       </div>
+      {trace && <VersionDiffBanner trace={trace} />}
       {loading && (
         <div className="trace-panel-loading">
           <Spinner /> Loading trace…
