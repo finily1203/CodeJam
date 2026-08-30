@@ -1,3 +1,4 @@
+import { getActorId, getActorName } from "./actor";
 import type { Agent, AgentRun, Message, RunTrace, SystemInfo } from "./types";
 
 export class ApiError extends Error {
@@ -16,9 +17,12 @@ export function setAuthToken(token: string): void {
 }
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
+  const actorName = getActorName().trim();
   const headers = {
     ...(options?.body ? { "Content-Type": "application/json" } : {}),
     ...(authToken ? { Authorization: "Bearer " + authToken } : {}),
+    "X-Actor-Id": getActorId(),
+    ...(actorName ? { "X-Actor-Name": actorName } : {}),
     ...options?.headers,
   };
   const response = await fetch(url, {

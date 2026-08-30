@@ -1,20 +1,28 @@
 import { randomUUID } from "node:crypto";
 import type { AppConfig } from "./config.js";
 import { isArkConfigured } from "./config.js";
-import { HttpError, RunCancelledError } from "./errors.js";
+import { HttpError, PolicyViolationError, RunCancelledError } from "./errors.js";
+import { redact } from "./redact.js";
 import { JsonStore } from "./store.js";
 import type {
+  Actor,
   Agent,
   AgentRun,
   AgentRunner,
   CreateAgentInput,
   Message,
+  RunSpan,
   RunTrace,
   UpdateAgentInput,
 } from "./types.js";
 import { WorkspaceManager } from "./workspace.js";
 
 const now = () => new Date().toISOString();
+
+// No real auth exists on this single-user POC, so a Run that arrives without
+// an actor header (a raw API/curl call, or an older client) is attributed to
+// this mock principal rather than left unattributed.
+const ANONYMOUS_ACTOR: Actor = { type: "human", id: "anonymous", name: "Anonymous operator" };
 
 export class AgentService {
   private readonly activeExecutions = new Map<string, Promise<void>>();
@@ -149,6 +157,8 @@ export class AgentService {
       runId: run.id,
       agentId: run.agentId,
       status: run.status,
+      initiatedBy: run.initiatedBy,
+      sessionId: run.sessionId,
       spans: run.spans,
     };
   }
@@ -164,6 +174,7 @@ export class AgentService {
   async sendMessage(
     agentId: string,
     prompt: string,
+    initiatedBy: Actor = ANONYMOUS_ACTOR,
   ): Promise<{ run: AgentRun; message: Message }> {
     if (!isArkConfigured(this.config)) {
       throw new HttpError(
@@ -181,11 +192,21 @@ export class AgentService {
       agentId,
       traceId,
       status: "queued",
+      // Kept unredacted: this is what actually gets sent to the Agent
+      // Runtime below (redacting it would silently feed Codex "[REDACTED]"
+      // instead of what the user typed). Codex resumes sessions by
+      // threadId, not by reading this field back, so it is never re-read
+      // operationally after this Run starts.
       prompt,
       output: null,
       error: null,
       usage: null,
       spans: [],
+      initiatedBy,
+      // Filled in below, inside the mutate callback, from the Agent's
+      // current Codex thread — null here means "resolved below or, if this
+      // Run never reaches a successful completion, stays unresolved."
+      sessionId: null,
       startedAt: null,
       completedAt: null,
       createdAt: timestamp,
@@ -195,7 +216,11 @@ export class AgentService {
       agentId,
       runId,
       role: "user",
-      content: prompt,
+      // Redacted: this is the display/storage copy shown in the
+      // conversation and saved to disk — it never feeds back into the
+      // Agent's execution, so redacting it is purely a display/storage
+      // safeguard with no functional side effect.
+      content: redact(prompt),
       createdAt: timestamp,
     };
     const agentAtStart = await this.store.mutate((database) => {
@@ -209,6 +234,10 @@ export class AgentService {
       if (storedAgent.status === "busy") {
         throw new HttpError(409, "This Agent is already running");
       }
+      // Reuse the Agent's existing Codex thread as this Run's session, if
+      // one already exists; a brand-new Agent has none yet, and this Run's
+      // own result will establish it (see executeRun's success path).
+      run.sessionId = storedAgent.codexThreadId;
       database.runs.push(run);
       database.messages.push(message);
       const snapshot = structuredClone(storedAgent);
@@ -256,59 +285,103 @@ export class AgentService {
         storedRun.startedAt = now();
       }
     });
-    try {
-      if (this.cancellationRequests.has(agentAtStart.id)) {
-        throw new RunCancelledError();
-      }
-      const result = await this.runner.run({
-        agentId: agentAtStart.id,
-        workspacePath: agentAtStart.workspacePath,
-        prompt: run.prompt,
-        threadId: agentAtStart.codexThreadId,
-      });
-      const completedAt = now();
-      await this.store.mutate((database) => {
-        const storedRun = database.runs.find((item) => item.id === run.id);
-        const agent = database.agents.find((item) => item.id === agentAtStart.id);
-        if (!storedRun || !agent) return;
-        storedRun.status = "completed";
-        storedRun.output = result.output;
-        storedRun.usage = result.usage;
-        storedRun.spans = result.spans;
-        storedRun.completedAt = completedAt;
-        database.messages.push({
-          id: randomUUID(),
-          agentId: agent.id,
-          runId: run.id,
-          role: "assistant",
-          content: result.output,
-          createdAt: completedAt,
+
+    // One automatic retry for a transient Runtime failure — this is the
+    // platform's "recover from a failed step" case. A denial and an
+    // explicit user cancellation are both decisions, not glitches, so
+    // neither is retried; anything else (a timeout, a crash, a non-zero
+    // exit) gets one more attempt before the Run is given up as failed.
+    const maxAttempts = 2;
+    const recoverySpans: RunSpan[] = [];
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        if (this.cancellationRequests.has(agentAtStart.id)) {
+          throw new RunCancelledError();
+        }
+        const result = await this.runner.run({
+          agentId: agentAtStart.id,
+          workspacePath: agentAtStart.workspacePath,
+          prompt: run.prompt,
+          threadId: agentAtStart.codexThreadId,
         });
-        agent.status = "ready";
-        agent.codexThreadId = result.threadId;
-        agent.lastError = null;
-        agent.updatedAt = completedAt;
-      });
-    } catch (error) {
-      const completedAt = now();
-      const cancelled = error instanceof RunCancelledError;
-      const message = error instanceof Error ? error.message : String(error);
-      await this.store.mutate((database) => {
-        const storedRun = database.runs.find((item) => item.id === run.id);
-        const agent = database.agents.find((item) => item.id === agentAtStart.id);
-        if (storedRun) {
-          storedRun.status = cancelled ? "cancelled" : "failed";
-          storedRun.error = message;
+        const completedAt = now();
+        // Redacted here, not just in span detail — the Agent could echo a
+        // secret back in its own answer (e.g. after reading an env var),
+        // and this is the last point before it becomes persisted, displayed
+        // conversation history.
+        const output = redact(result.output);
+        await this.store.mutate((database) => {
+          const storedRun = database.runs.find((item) => item.id === run.id);
+          const agent = database.agents.find((item) => item.id === agentAtStart.id);
+          if (!storedRun || !agent) return;
+          storedRun.status = "completed";
+          storedRun.output = output;
+          storedRun.usage = result.usage;
+          storedRun.spans = [...recoverySpans, ...result.spans];
+          storedRun.sessionId ??= result.threadId;
           storedRun.completedAt = completedAt;
-        }
-        if (agent) {
-          if (agent.status !== "stopped") {
-            agent.status = cancelled ? "ready" : "error";
-          }
-          agent.lastError = cancelled ? null : message;
+          database.messages.push({
+            id: randomUUID(),
+            agentId: agent.id,
+            runId: run.id,
+            role: "assistant",
+            content: output,
+            createdAt: completedAt,
+          });
+          agent.status = "ready";
+          agent.codexThreadId = result.threadId;
+          agent.lastError = null;
           agent.updatedAt = completedAt;
+        });
+        return;
+      } catch (error) {
+        const cancelled = error instanceof RunCancelledError;
+        const policyViolation = error instanceof PolicyViolationError;
+        const message = error instanceof Error ? error.message : String(error);
+        const retryable = !cancelled && !policyViolation && attempt < maxAttempts;
+
+        if (retryable) {
+          recoverySpans.push({
+            id: "retry-" + attempt,
+            parentId: null,
+            category: "error",
+            label: "Attempt " + attempt + " failed — retrying",
+            startedAt: now(),
+            endedAt: now(),
+            status: "failed",
+            detail: message,
+          });
+          continue;
         }
-      });
+
+        const completedAt = now();
+        // A PolicyViolationError carries the spans captured up to the moment
+        // of denial — including the policy_decision span itself — so that
+        // evidence survives on the failed Run instead of being discarded
+        // like a generic failure's spans currently are.
+        const spans = policyViolation
+          ? [...recoverySpans, ...(error as PolicyViolationError).spans]
+          : recoverySpans;
+        await this.store.mutate((database) => {
+          const storedRun = database.runs.find((item) => item.id === run.id);
+          const agent = database.agents.find((item) => item.id === agentAtStart.id);
+          if (storedRun) {
+            storedRun.status = cancelled ? "cancelled" : "failed";
+            storedRun.error = message;
+            storedRun.spans = spans;
+            storedRun.completedAt = completedAt;
+          }
+          if (agent) {
+            if (agent.status !== "stopped") {
+              agent.status = cancelled ? "ready" : "error";
+            }
+            agent.lastError = cancelled ? null : message;
+            agent.updatedAt = completedAt;
+          }
+        });
+        return;
+      }
     }
   }
 

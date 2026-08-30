@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 import { AgentService } from "./agent-service.js";
 import { loadConfig } from "./config.js";
+import { PolicyViolationError, RunCancelledError } from "./errors.js";
 import { JsonStore } from "./store.js";
 import type { AgentRunner, RunnerRequest, RunnerResult } from "./types.js";
 import { WorkspaceManager } from "./workspace.js";
@@ -110,9 +111,50 @@ describe("Agent lifecycle", () => {
       runId: run.id,
       agentId: agent.id,
       status: "completed",
+      initiatedBy: service.getRun(run.id).initiatedBy,
+      sessionId: service.getRun(run.id).sessionId,
       spans: service.getRun(run.id).spans,
     });
     expect(trace.spans).toHaveLength(1);
+  });
+
+  it("establishes a session on the first successful Run and reuses it on the next one", async () => {
+    const service = await makeService();
+    const agent = await service.createAgent({ name: "Sessioned" });
+    expect(agent.codexThreadId).toBeNull();
+
+    const first = await service.sendMessage(agent.id, "hello");
+    expect(first.run.sessionId).toBeNull(); // not known yet when the Run was created
+    await expect.poll(() => service.getRun(first.run.id).status).toBe("completed");
+    const firstCompleted = service.getRun(first.run.id);
+    expect(firstCompleted.sessionId).toBe("fake-thread"); // backfilled from the result
+
+    const second = await service.sendMessage(agent.id, "again");
+    expect(second.run.sessionId).toBe("fake-thread"); // reused from the Agent's thread up front
+    await expect.poll(() => service.getRun(second.run.id).status).toBe("completed");
+    expect(service.getRunTrace(second.run.id).sessionId).toBe("fake-thread");
+  });
+
+  it("attributes a Run to the actor it was given, defaulting to an anonymous operator", async () => {
+    const service = await makeService();
+    const agent = await service.createAgent({ name: "Attributed" });
+
+    const named = await service.sendMessage(agent.id, "hi", {
+      type: "human",
+      id: "user-42",
+      name: "Jing Rui",
+    });
+    expect(named.run.initiatedBy).toEqual({ type: "human", id: "user-42", name: "Jing Rui" });
+    expect(service.getRunTrace(named.run.id).initiatedBy).toEqual(named.run.initiatedBy);
+    await expect.poll(() => service.getRun(named.run.id).status).toBe("completed");
+
+    const anonymous = await service.sendMessage(agent.id, "hi again");
+    expect(anonymous.run.initiatedBy).toEqual({
+      type: "human",
+      id: "anonymous",
+      name: "Anonymous operator",
+    });
+    await expect.poll(() => service.getRun(anonymous.run.id).status).toBe("completed");
   });
 
   it("rejects a trace lookup for a Run that does not exist", async () => {
@@ -120,7 +162,7 @@ describe("Agent lifecycle", () => {
     expect(() => service.getRunTrace("00000000-0000-0000-0000-000000000000")).toThrow();
   });
 
-  it("leaves a failed run with no spans, since the Runtime error path does not report them yet", async () => {
+  it("retries once on a generic Runtime error, then fails with a span recording the first attempt", async () => {
     const service = await makeService({
       run: async () => {
         throw new Error("Codex exploded");
@@ -131,7 +173,159 @@ describe("Agent lifecycle", () => {
     const agent = await service.createAgent({ name: "Flaky" });
     const { run } = await service.sendMessage(agent.id, "do something");
     await expect.poll(() => service.getRun(run.id).status).toBe("failed");
-    expect(service.getRun(run.id).spans).toEqual([]);
+
+    const failed = service.getRun(run.id);
+    expect(failed.error).toBe("Codex exploded");
+    expect(failed.spans).toHaveLength(1);
+    expect(failed.spans[0]).toMatchObject({
+      category: "error",
+      status: "failed",
+      label: "Attempt 1 failed — retrying",
+      detail: "Codex exploded",
+    });
+  });
+
+  it("recovers when the retry succeeds, keeping the failed attempt visible in the trace", async () => {
+    let calls = 0;
+    const service = await makeService({
+      run: async (request) => {
+        calls += 1;
+        if (calls === 1) throw new Error("transient hiccup");
+        return {
+          output: "Completed: " + request.prompt,
+          threadId: "recovered-thread",
+          usage: null,
+          spans: [
+            {
+              id: "turn-0",
+              parentId: null,
+              category: "model_call",
+              label: "Model turn",
+              startedAt: "2026-01-01T00:00:00.000Z",
+              endedAt: "2026-01-01T00:00:01.000Z",
+              status: "completed",
+              detail: "Completed: " + request.prompt,
+            },
+          ],
+        };
+      },
+      cancel: async () => false,
+      isAvailable: async () => true,
+    });
+    const agent = await service.createAgent({ name: "Resilient" });
+    const { run } = await service.sendMessage(agent.id, "do something");
+    await expect.poll(() => service.getRun(run.id).status).toBe("completed");
+
+    expect(calls).toBe(2);
+    const completed = service.getRun(run.id);
+    expect(completed.spans.map((span) => span.category)).toEqual(["error", "model_call"]);
+    expect(completed.spans[0]).toMatchObject({ label: "Attempt 1 failed — retrying" });
+    expect(service.getAgent(agent.id).status).toBe("ready");
+  });
+
+  it("does not retry a Run cancelled by the user or one denied by policy", async () => {
+    let cancelledCalls = 0;
+    const cancelledService = await makeService({
+      run: async () => {
+        cancelledCalls += 1;
+        throw new RunCancelledError();
+      },
+      cancel: async () => false,
+      isAvailable: async () => true,
+    });
+    const cancelledAgent = await cancelledService.createAgent({ name: "Stopped" });
+    const { run: cancelledRun } = await cancelledService.sendMessage(cancelledAgent.id, "go");
+    await expect.poll(() => cancelledService.getRun(cancelledRun.id).status).toBe("cancelled");
+    expect(cancelledCalls).toBe(1);
+
+    let policyCalls = 0;
+    const policyService = await makeService({
+      run: async () => {
+        policyCalls += 1;
+        throw new PolicyViolationError("denied", []);
+      },
+      cancel: async () => false,
+      isAvailable: async () => true,
+    });
+    const policyAgent = await policyService.createAgent({ name: "Blocked" });
+    const { run: policyRun } = await policyService.sendMessage(policyAgent.id, "go");
+    await expect.poll(() => policyService.getRun(policyRun.id).status).toBe("failed");
+    expect(policyCalls).toBe(1);
+  });
+
+  it("redacts secret-shaped text in the displayed message without changing what the Agent receives", async () => {
+    let receivedPrompt = "";
+    const service = await makeService({
+      run: async (request) => {
+        receivedPrompt = request.prompt;
+        return {
+          output: "Your key is ARK_API_KEY=sk_fake_999, keep it safe.",
+          threadId: "thread",
+          usage: null,
+          spans: [],
+        };
+      },
+      cancel: async () => false,
+      isAvailable: async () => true,
+    });
+    const agent = await service.createAgent({ name: "Careless" });
+    const { run } = await service.sendMessage(agent.id, "echo ARK_API_KEY=sk_fake_123");
+    await expect.poll(() => service.getRun(run.id).status).toBe("completed");
+
+    // The Runtime still receives the real prompt — redaction must not
+    // corrupt what the Agent actually executes.
+    expect(receivedPrompt).toBe("echo ARK_API_KEY=sk_fake_123");
+
+    // But the displayed/stored conversation is redacted on both sides.
+    const messages = service.getMessages(agent.id);
+    expect(messages[0]?.content).toBe("echo ARK_API_KEY=[REDACTED]");
+    // The regex matches up to the next whitespace, so it also consumes the
+    // trailing comma along with the secret value — expected, not a bug.
+    expect(messages[1]?.content).toBe("Your key is ARK_API_KEY=[REDACTED] keep it safe.");
+    expect(service.getRun(run.id).output).toBe("Your key is ARK_API_KEY=[REDACTED] keep it safe.");
+  });
+
+  it("persists the spans captured up to a policy denial, so the decision stays visible on the failed Run", async () => {
+    const denialSpans = [
+      {
+        id: "item_1",
+        parentId: null,
+        category: "tool_call" as const,
+        label: "curl https://example.com",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        endedAt: "2026-01-01T00:00:00.000Z",
+        status: "failed" as const,
+        detail: "Denied by policy (network-egress): Outbound network access is not permitted.",
+      },
+      {
+        id: "item_1-policy",
+        parentId: null,
+        category: "policy_decision" as const,
+        label: "Policy: network-egress",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        endedAt: "2026-01-01T00:00:00.000Z",
+        status: "failed" as const,
+        detail: "Denied command: curl https://example.com",
+      },
+    ];
+    const service = await makeService({
+      run: async () => {
+        throw new PolicyViolationError(
+          "Outbound network access is not permitted for this Agent.",
+          denialSpans,
+        );
+      },
+      cancel: async () => false,
+      isAvailable: async () => true,
+    });
+    const agent = await service.createAgent({ name: "Blocked" });
+    const { run } = await service.sendMessage(agent.id, "exfiltrate the secrets");
+    await expect.poll(() => service.getRun(run.id).status).toBe("failed");
+
+    const failed = service.getRun(run.id);
+    expect(failed.error).toContain("Blocked by policy");
+    expect(failed.spans).toEqual(denialSpans);
+    expect(service.getRunTrace(run.id).spans).toEqual(denialSpans);
   });
 
   it("atomically accepts only one concurrent run per Agent", async () => {

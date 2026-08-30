@@ -7,7 +7,7 @@ import {
   parseCodexEventLine,
   type ParsedEvents,
 } from "./codex-runner.js";
-import { RunCancelledError } from "./errors.js";
+import { PolicyViolationError, RunCancelledError } from "./errors.js";
 import type { AgentRunner, RunnerRequest, RunnerResult } from "./types.js";
 
 const execFileAsync = promisify(execFile);
@@ -18,6 +18,7 @@ interface ActiveContainer {
   cancelled: boolean;
   timedOut: boolean;
   outputExceeded: boolean;
+  policyViolated: boolean;
   settled: Promise<void>;
   termination: Promise<void> | null;
 }
@@ -154,6 +155,7 @@ export class ContainerCodexRunner implements AgentRunner {
       cancelled: false,
       timedOut: false,
       outputExceeded: false,
+      policyViolated: false,
       settled,
       termination: null,
     };
@@ -165,6 +167,7 @@ export class ContainerCodexRunner implements AgentRunner {
       usage: null,
       errors: [],
       spans: [],
+      policyViolation: null,
     };
     let stdout = "";
     let stderr = "";
@@ -181,7 +184,13 @@ export class ContainerCodexRunner implements AgentRunner {
         stdout += chunk.toString("utf8");
         const lines = stdout.split(/\r?\n/);
         stdout = lines.pop() ?? "";
-        for (const line of lines) parseCodexEventLine(line, parsed);
+        for (const line of lines) {
+          parseCodexEventLine(line, parsed);
+          if (parsed.policyViolation && !active.policyViolated) {
+            active.policyViolated = true;
+            void this.removeContainer(active);
+          }
+        }
       } else {
         stderr += chunk.toString("utf8");
         if (stderr.length > 16_384) stderr = stderr.slice(-16_384);
@@ -202,7 +211,17 @@ export class ContainerCodexRunner implements AgentRunner {
         child.once("error", reject);
         child.once("close", (code) => resolve(code ?? 1));
       });
-      if (stdout.trim()) parseCodexEventLine(stdout.trim(), parsed);
+      if (stdout.trim()) {
+        parseCodexEventLine(stdout.trim(), parsed);
+        if (parsed.policyViolation && !active.policyViolated) {
+          active.policyViolated = true;
+          void this.removeContainer(active);
+        }
+      }
+      if (active.policyViolated) {
+        closeDanglingSpans(parsed.spans, new Date().toISOString());
+        throw new PolicyViolationError(parsed.policyViolation ?? "command denied", parsed.spans);
+      }
       if (active.cancelled) throw new RunCancelledError();
       if (active.timedOut) {
         throw new Error("Runtime timed out after " + this.config.codexTimeoutMs + " ms");
