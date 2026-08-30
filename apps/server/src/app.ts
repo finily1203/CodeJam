@@ -138,6 +138,11 @@ export async function createApp(
     return { runs: service.getRuns(id) };
   });
 
+  app.get("/api/agents/:id/versions", async (request) => {
+    const { id } = agentIdParams.parse(request.params);
+    return { versions: service.getAgentVersions(id) };
+  });
+
   app.post("/api/agents/:id/messages", async (request, reply) => {
     const { id } = agentIdParams.parse(request.params);
     const body = messageBody.parse(request.body);

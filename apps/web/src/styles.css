@@ -453,6 +453,18 @@ button {
   font-size: 12px;
 }
 
+.version-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--purple-soft);
+  color: var(--purple-dark);
+  white-space: nowrap;
+}
+
 .header-actions {
   display: flex;
   gap: 7px;

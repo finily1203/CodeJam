@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getActorName, setActorName } from "./actor";
 import { api, ApiError, setAuthToken } from "./api";
-import type { Agent, AgentRun, Message, RunSpan, RunTrace, SystemInfo } from "./types";
+import type {
+  Agent,
+  AgentRun,
+  AgentVersion,
+  Message,
+  RunSpan,
+  RunTrace,
+  SystemInfo,
+} from "./types";
 
 const starterPrompts = [
   "Create a small TypeScript CLI that prints a weather summary from sample JSON.",
@@ -254,6 +262,10 @@ function TracePanel({
                   {trace.environment.arkModel || "unset"}
                 </span>
               )}
+              <span className="trace-meta-tag" title="Agent configuration version used for this Run">
+                <span className="trace-meta-icon">v</span>
+                {trace.agentVersion}
+              </span>
             </div>
             <div className="trace-panel-actions">
               <button
@@ -369,6 +381,73 @@ function RunsPanel({
   );
 }
 
+function VersionRow({ version }: { version: AgentVersion }) {
+  const [expanded, setExpanded] = useState(false);
+  const changeSummary =
+    version.changedFields.length > 0 ? version.changedFields.join(", ") : "Created";
+  return (
+    <li>
+      <button className="runs-row" onClick={() => setExpanded((value) => !value)}>
+        <span className="version-badge">v{version.version}</span>
+        <span className="runs-row-prompt">{changeSummary}</span>
+        <span className="runs-row-time">{formatTime(version.createdAt)}</span>
+      </button>
+      {expanded && (
+        <div className="trace-span-detail">
+          <strong>{version.name}</strong>
+          {version.description && <p>{version.description}</p>}
+          <pre>{version.instructions || "(no instructions)"}</pre>
+        </div>
+      )}
+    </li>
+  );
+}
+
+function VersionsPanel({
+  versions,
+  loading,
+  error,
+  onClose,
+}: {
+  versions: AgentVersion[];
+  loading: boolean;
+  error: string | null;
+  onClose: () => void;
+}) {
+  return (
+    <section className="runs-panel">
+      <div className="runs-panel-header">
+        <div>
+          <span className="eyebrow">Configuration history</span>
+          <h3>Versions</h3>
+        </div>
+        <button
+          className="trace-panel-close"
+          onClick={onClose}
+          aria-label="Close version history"
+        >
+          ×
+        </button>
+      </div>
+      {loading && (
+        <div className="trace-panel-loading">
+          <Spinner /> Loading versions…
+        </div>
+      )}
+      {error && <div className="error-banner" role="alert">{error}</div>}
+      {!loading && !error && (
+        <ul className="runs-list">
+          {versions.length === 0 ? (
+            <li className="trace-empty">No version history yet.</li>
+          ) : (
+            versions.map((version) => <VersionRow key={version.id} version={version} />)
+          )}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 export default function App() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -398,6 +477,10 @@ export default function App() {
   const [runsList, setRunsList] = useState<AgentRun[]>([]);
   const [runsLoading, setRunsLoading] = useState(false);
   const [runsError, setRunsError] = useState<string | null>(null);
+  const [showVersions, setShowVersions] = useState(false);
+  const [versionsList, setVersionsList] = useState<AgentVersion[]>([]);
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  const [versionsError, setVersionsError] = useState<string | null>(null);
 
   const messageEnd = useRef<HTMLDivElement>(null);
   const selectedIdRef = useRef<string | null>(null);
@@ -480,6 +563,9 @@ export default function App() {
     setShowRuns(false);
     setRunsList([]);
     setRunsError(null);
+    setShowVersions(false);
+    setVersionsList([]);
+    setVersionsError(null);
     if (!selectedId) {
       setMessages([]);
       return;
@@ -537,9 +623,14 @@ export default function App() {
     if (!selected) return;
     setBusy(true);
     setError(null);
+    const agentId = selected.id;
     try {
-      await api.updateAgent(selected.id, form);
+      await api.updateAgent(agentId, form);
       await refreshAgents();
+      if (showVersions && selectedIdRef.current === agentId) {
+        const result = await api.versions(agentId);
+        if (selectedIdRef.current === agentId) setVersionsList(result.versions);
+      }
       setShowSettings(false);
       showToast("Settings saved");
     } catch (reason) {
@@ -629,6 +720,28 @@ export default function App() {
       }
     } finally {
       if (selectedIdRef.current === agentId) setRunsLoading(false);
+    }
+  };
+
+  const toggleVersions = async () => {
+    if (!selected) return;
+    if (showVersions) {
+      setShowVersions(false);
+      return;
+    }
+    setShowVersions(true);
+    setVersionsError(null);
+    setVersionsLoading(true);
+    const agentId = selected.id;
+    try {
+      const result = await api.versions(agentId);
+      if (selectedIdRef.current === agentId) setVersionsList(result.versions);
+    } catch (reason) {
+      if (selectedIdRef.current === agentId) {
+        setVersionsError(reason instanceof Error ? reason.message : String(reason));
+      }
+    } finally {
+      if (selectedIdRef.current === agentId) setVersionsLoading(false);
     }
   };
 
@@ -842,11 +955,21 @@ export default function App() {
               <div>
                 <div className="header-title-row">
                   <h1>{selected.name}</h1>
+                  <span className="version-badge" title="Agent configuration version">
+                    v{selected.version}
+                  </span>
                   <StatusPill status={selected.status} />
                 </div>
                 <p>{selected.description || "A Codex coding Agent in an isolated workspace."}</p>
               </div>
               <div className="header-actions">
+                <button
+                  className={"button button-ghost" + (showVersions ? " button-active" : "")}
+                  onClick={toggleVersions}
+                  disabled={busy}
+                >
+                  Versions
+                </button>
                 <button
                   className={"button button-ghost" + (showRuns ? " button-active" : "")}
                   onClick={toggleRuns}
@@ -897,6 +1020,15 @@ export default function App() {
                 )}
               </div>
             </header>
+
+            {showVersions && (
+              <VersionsPanel
+                versions={versionsList}
+                loading={versionsLoading}
+                error={versionsError}
+                onClose={() => setShowVersions(false)}
+              />
+            )}
 
             {showRuns && (
               <RunsPanel

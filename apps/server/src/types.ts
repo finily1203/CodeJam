@@ -11,8 +11,27 @@ export interface Agent {
   workspacePath: string;
   codexThreadId: string | null;
   lastError: string | null;
+  /** Bumped on every updateAgent call; 1 for a never-edited Agent. */
+  version: number;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * A point-in-time snapshot of an Agent's configuration, recorded whenever it
+ * is created or edited — the "update configuration through a new version and
+ * show what changed" lifecycle action from the brief. changedFields is empty
+ * for the version created alongside the Agent itself.
+ */
+export interface AgentVersion {
+  id: string;
+  agentId: string;
+  version: number;
+  name: string;
+  description: string;
+  instructions: string;
+  changedFields: string[];
+  createdAt: string;
 }
 
 export interface Message {
@@ -67,6 +86,8 @@ export interface AgentRun {
   spans: RunSpan[];
   /** Null only for a Run persisted before this field existed. */
   environment: RunEnvironment | null;
+  /** The Agent's version when this Run started. 1 for any Run that predates versioning — true, not a guess, since no Agent had more than one version before this field existed. */
+  agentVersion: number;
   initiatedBy: Actor;
   /**
    * The Codex thread this Run participated in — Codex's own session
@@ -80,13 +101,14 @@ export interface AgentRun {
   createdAt: string;
 }
 
-export const DATABASE_VERSION = 5;
+export const DATABASE_VERSION = 6;
 
 export interface Database {
   version: typeof DATABASE_VERSION;
   agents: Agent[];
   messages: Message[];
   runs: AgentRun[];
+  agentVersions: AgentVersion[];
 }
 
 export interface CreateAgentInput {
@@ -129,6 +151,7 @@ export interface RunTrace {
   sessionId: string | null;
   usage: RunUsage | null;
   environment: RunEnvironment | null;
+  agentVersion: number;
   spans: RunSpan[];
 }
 

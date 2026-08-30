@@ -61,7 +61,20 @@ describe("JsonStore", () => {
     const filePath = path.join(root, "db.json");
     const legacyDatabase = {
       version: 1,
-      agents: [],
+      agents: [
+        {
+          id: "agent-1",
+          name: "Legacy Agent",
+          description: "",
+          instructions: "",
+          status: "ready",
+          workspacePath: "/tmp/agent-1",
+          codexThreadId: null,
+          lastError: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
       messages: [],
       runs: [
         {
@@ -84,7 +97,7 @@ describe("JsonStore", () => {
     await store.initialize();
 
     const migrated = store.snapshot();
-    expect(migrated.version).toBe(5);
+    expect(migrated.version).toBe(6);
     expect(migrated.runs[0]?.spans).toEqual([]);
     expect(migrated.runs[0]?.initiatedBy).toEqual({
       type: "human",
@@ -93,9 +106,12 @@ describe("JsonStore", () => {
     });
     expect(migrated.runs[0]?.sessionId).toBeNull();
     expect(migrated.runs[0]?.environment).toBeNull();
+    expect(migrated.runs[0]?.agentVersion).toBe(1);
+    expect(migrated.agents[0]?.version).toBe(1);
+    expect(migrated.agentVersions).toEqual([]);
 
     const onDisk = JSON.parse(await readFile(filePath, "utf8")) as Database;
-    expect(onDisk.version).toBe(5);
+    expect(onDisk.version).toBe(6);
     expect(onDisk.runs[0]?.spans).toEqual([]);
     expect(onDisk.runs[0]?.initiatedBy).toEqual({
       type: "human",
@@ -104,6 +120,8 @@ describe("JsonStore", () => {
     });
     expect(onDisk.runs[0]?.sessionId).toBeNull();
     expect(onDisk.runs[0]?.environment).toBeNull();
+    expect(onDisk.runs[0]?.agentVersion).toBe(1);
+    expect(onDisk.agents[0]?.version).toBe(1);
   });
 
   it("migrates a version-2 database on disk by backfilling initiatedBy on existing runs", async () => {
@@ -136,7 +154,7 @@ describe("JsonStore", () => {
     await store.initialize();
 
     const migrated = store.snapshot();
-    expect(migrated.version).toBe(5);
+    expect(migrated.version).toBe(6);
     expect(migrated.runs[0]?.initiatedBy).toEqual({
       type: "human",
       id: "unknown",
@@ -144,6 +162,7 @@ describe("JsonStore", () => {
     });
     expect(migrated.runs[0]?.sessionId).toBeNull();
     expect(migrated.runs[0]?.environment).toBeNull();
+    expect(migrated.runs[0]?.agentVersion).toBe(1);
   });
 
   it("migrates a version-3 database on disk by backfilling sessionId on existing runs", async () => {
@@ -177,7 +196,7 @@ describe("JsonStore", () => {
     await store.initialize();
 
     const migrated = store.snapshot();
-    expect(migrated.version).toBe(5);
+    expect(migrated.version).toBe(6);
     expect(migrated.runs[0]?.sessionId).toBeNull();
     expect(migrated.runs[0]?.initiatedBy).toEqual({
       type: "human",
@@ -185,6 +204,7 @@ describe("JsonStore", () => {
       name: "Someone",
     });
     expect(migrated.runs[0]?.environment).toBeNull();
+    expect(migrated.runs[0]?.agentVersion).toBe(1);
   });
 
   it("migrates a version-4 database on disk by backfilling environment on existing runs", async () => {
@@ -219,9 +239,62 @@ describe("JsonStore", () => {
     await store.initialize();
 
     const migrated = store.snapshot();
-    expect(migrated.version).toBe(5);
+    expect(migrated.version).toBe(6);
     expect(migrated.runs[0]?.environment).toBeNull();
     expect(migrated.runs[0]?.sessionId).toBe("thread-1");
+    expect(migrated.runs[0]?.agentVersion).toBe(1);
+  });
+
+  it("migrates a version-5 database on disk by backfilling agent and run versioning", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "launchpad-store-test-"));
+    temporaryDirectories.push(root);
+    const filePath = path.join(root, "db.json");
+    const legacyDatabase = {
+      version: 5,
+      agents: [
+        {
+          id: "agent-1",
+          name: "Legacy Agent",
+          description: "",
+          instructions: "",
+          status: "ready",
+          workspacePath: "/tmp/agent-1",
+          codexThreadId: null,
+          lastError: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      messages: [],
+      runs: [
+        {
+          id: "run-1",
+          agentId: "agent-1",
+          status: "completed",
+          prompt: "hello",
+          output: "hi",
+          error: null,
+          usage: null,
+          spans: [],
+          initiatedBy: { type: "human", id: "user-1", name: "Someone" },
+          sessionId: "thread-1",
+          environment: null,
+          startedAt: "2026-01-01T00:00:00.000Z",
+          completedAt: "2026-01-01T00:00:01.000Z",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    };
+    await writeFile(filePath, JSON.stringify(legacyDatabase), "utf8");
+
+    const store = new JsonStore(filePath);
+    await store.initialize();
+
+    const migrated = store.snapshot();
+    expect(migrated.version).toBe(6);
+    expect(migrated.agents[0]?.version).toBe(1);
+    expect(migrated.runs[0]?.agentVersion).toBe(1);
+    expect(migrated.agentVersions).toEqual([]);
   });
 
   it("rejects a database file from an unsupported future version", async () => {

@@ -82,6 +82,76 @@ describe("Agent lifecycle", () => {
     expect(service.listAgents()).toHaveLength(0);
   });
 
+  it("starts an Agent at version 1 with one initial version record", async () => {
+    const service = await makeService();
+    const agent = await service.createAgent({
+      name: "Builder",
+      description: "v1",
+      instructions: "Build things",
+    });
+    expect(agent.version).toBe(1);
+
+    const versions = service.getAgentVersions(agent.id);
+    expect(versions).toHaveLength(1);
+    expect(versions[0]).toMatchObject({
+      version: 1,
+      name: "Builder",
+      description: "v1",
+      instructions: "Build things",
+      changedFields: [],
+    });
+  });
+
+  it("bumps the version and records changed fields only when an edit actually changes something", async () => {
+    const service = await makeService();
+    const agent = await service.createAgent({ name: "Builder", description: "v1" });
+
+    const resent = await service.updateAgent(agent.id, { description: "v1" });
+    expect(resent.version).toBe(1);
+    expect(service.getAgentVersions(agent.id)).toHaveLength(1);
+
+    const edited = await service.updateAgent(agent.id, {
+      description: "v2",
+      instructions: "Be terse",
+    });
+    expect(edited.version).toBe(2);
+    const versions = service.getAgentVersions(agent.id);
+    expect(versions).toHaveLength(2);
+    expect(versions[0]).toMatchObject({
+      version: 2,
+      description: "v2",
+      instructions: "Be terse",
+      changedFields: ["description", "instructions"],
+    });
+    expect(versions[1]).toMatchObject({ version: 1, changedFields: [] });
+  });
+
+  it("stamps each Run with the Agent's version at send time, unaffected by later edits", async () => {
+    const service = await makeService();
+    const agent = await service.createAgent({ name: "Builder" });
+    const first = await service.sendMessage(agent.id, "first");
+    await expect.poll(() => service.getRun(first.run.id).status).toBe("completed");
+    expect(service.getRun(first.run.id).agentVersion).toBe(1);
+
+    await service.updateAgent(agent.id, { description: "changed" });
+    const second = await service.sendMessage(agent.id, "second");
+    await expect.poll(() => service.getRun(second.run.id).status).toBe("completed");
+    expect(service.getRun(second.run.id).agentVersion).toBe(2);
+    // The first Run's own record must not retroactively change.
+    expect(service.getRun(first.run.id).agentVersion).toBe(1);
+    expect(service.getRunTrace(second.run.id).agentVersion).toBe(2);
+  });
+
+  it("rejects a version-history lookup once the Agent is deleted", async () => {
+    const service = await makeService();
+    const agent = await service.createAgent({ name: "Builder" });
+    await service.updateAgent(agent.id, { description: "changed" });
+    expect(service.getAgentVersions(agent.id)).toHaveLength(2);
+
+    await service.deleteAgent(agent.id);
+    expect(() => service.getAgentVersions(agent.id)).toThrow();
+  });
+
   it("persists a playground conversation", async () => {
     const service = await makeService();
     const agent = await service.createAgent({ name: "Coder" });
@@ -115,10 +185,12 @@ describe("Agent lifecycle", () => {
       sessionId: service.getRun(run.id).sessionId,
       usage: service.getRun(run.id).usage,
       environment: service.getRun(run.id).environment,
+      agentVersion: service.getRun(run.id).agentVersion,
       spans: service.getRun(run.id).spans,
     });
     expect(trace.spans).toHaveLength(1);
     expect(trace.usage).toEqual({ inputTokens: 12, outputTokens: 5 });
+    expect(trace.agentVersion).toBe(1);
     expect(trace.environment).toEqual({
       arkModel: "ep-test",
       codexSandboxMode: "workspace-write",

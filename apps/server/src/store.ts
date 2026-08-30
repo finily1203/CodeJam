@@ -7,6 +7,7 @@ const emptyDatabase = (): Database => ({
   agents: [],
   messages: [],
   runs: [],
+  agentVersions: [],
 });
 
 export class JsonStore {
@@ -71,6 +72,21 @@ export class JsonStore {
           }
         }
         parsed.version = 5;
+        migrated = true;
+      }
+      if (parsed.version === 5) {
+        // Versioning starts here, so every pre-migration Agent has genuinely
+        // only ever had one configuration — 1 is the true version, not a
+        // placeholder, and the same reasoning applies to every Run it
+        // already produced.
+        if (!Array.isArray(parsed.agentVersions)) parsed.agentVersions = [];
+        for (const agent of parsed.agents as Array<Record<string, unknown>>) {
+          if (agent.version === undefined) agent.version = 1;
+        }
+        for (const run of parsed.runs as Array<Record<string, unknown>>) {
+          if (run.agentVersion === undefined) run.agentVersion = 1;
+        }
+        parsed.version = 6;
         migrated = true;
       }
       if (parsed.version !== DATABASE_VERSION) {

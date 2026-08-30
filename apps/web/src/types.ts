@@ -10,8 +10,20 @@ export interface Agent {
   workspacePath: string;
   codexThreadId: string | null;
   lastError: string | null;
+  version: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AgentVersion {
+  id: string;
+  agentId: string;
+  version: number;
+  name: string;
+  description: string;
+  instructions: string;
+  changedFields: string[];
+  createdAt: string;
 }
 
 export interface Message {
@@ -52,6 +64,7 @@ export interface AgentRun {
     outputTokens?: number;
   } | null;
   environment: RunEnvironment | null;
+  agentVersion: number;
   initiatedBy: Actor;
   sessionId: string | null;
   startedAt: string | null;
@@ -93,6 +106,7 @@ export interface RunTrace {
   sessionId: string | null;
   usage: RunUsage | null;
   environment: RunEnvironment | null;
+  agentVersion: number;
   spans: RunSpan[];
 }
 
