@@ -104,6 +104,16 @@ export class JsonStore {
         parsed.version = 7;
         migrated = true;
       }
+      if (parsed.version === 7) {
+        // Trace explanations are generated on demand, never retroactively -
+        // a pre-migration Run simply has none recorded yet, same as one
+        // nobody has asked to explain since this feature shipped.
+        for (const run of parsed.runs as Array<Record<string, unknown>>) {
+          if (run.explanation === undefined) run.explanation = null;
+        }
+        parsed.version = 8;
+        migrated = true;
+      }
       if (parsed.version !== DATABASE_VERSION) {
         throw new Error("Unsupported database format");
       }

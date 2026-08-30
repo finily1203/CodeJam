@@ -94,6 +94,8 @@ export interface AgentRun {
   estimatedCostUsd: number | null;
   /** The Agent's version when this Run started. 1 for any Run that predates versioning — true, not a guess, since no Agent had more than one version before this field existed. */
   agentVersion: number;
+  /** A 1-2 sentence plain-English summary of this Run, generated on demand by an Ark call and cached here so it is only ever generated once. Null until requested. */
+  explanation: string | null;
   initiatedBy: Actor;
   /**
    * The Codex thread this Run participated in — Codex's own session
@@ -107,7 +109,7 @@ export interface AgentRun {
   createdAt: string;
 }
 
-export const DATABASE_VERSION = 7;
+export const DATABASE_VERSION = 8;
 
 export interface Database {
   version: typeof DATABASE_VERSION;
@@ -184,6 +186,7 @@ export interface RunTrace {
   estimatedCostUsd: number | null;
   agentVersion: number;
   versionDiff: RunVersionDiff | null;
+  explanation: string | null;
   spans: RunSpan[];
 }
 
@@ -205,4 +208,26 @@ export interface AgentRunner {
   run(request: RunnerRequest): Promise<RunnerResult>;
   cancel(agentId: string): Promise<boolean>;
   isAvailable(): Promise<boolean>;
+}
+
+/**
+ * Everything a plain-English trace summary needs to reference: what was
+ * asked, what happened, and what it cost - deliberately a plain data object
+ * rather than the raw AgentRun, so a TraceExplainer never depends on
+ * persistence-layer shape.
+ */
+export interface ExplainTraceInput {
+  agentName: string;
+  status: RunStatus;
+  prompt: string;
+  output: string | null;
+  error: string | null;
+  usage: RunUsage | null;
+  estimatedCostUsd: number | null;
+  durationMs: number | null;
+  spans: RunSpan[];
+}
+
+export interface TraceExplainer {
+  explain(input: ExplainTraceInput): Promise<string>;
 }

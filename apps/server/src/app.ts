@@ -160,6 +160,11 @@ export async function createApp(
     return service.getRunTrace(id);
   });
 
+  app.post("/api/runs/:id/explain", async (request) => {
+    const { id } = runIdParams.parse(request.params);
+    return { run: await service.explainRun(id) };
+  });
+
   if (config.nodeEnv === "production") {
     const webRoot = fileURLToPath(new URL("../../web/dist", import.meta.url));
     await app.register(fastifyStatic, {

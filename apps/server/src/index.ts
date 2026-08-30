@@ -1,5 +1,6 @@
 import path from "node:path";
 import { AgentService } from "./agent-service.js";
+import { ArkTraceExplainer } from "./ark-explainer.js";
 import { createApp } from "./app.js";
 import { loadConfig, writeCodexConfig } from "./config.js";
 import { createRunner } from "./runner-factory.js";
@@ -12,7 +13,8 @@ await writeCodexConfig(config);
 const store = new JsonStore(path.join(config.dataDirectory, "launchpad.json"));
 const workspaces = new WorkspaceManager(config.workspaceRoot);
 const runner = createRunner(config);
-const service = new AgentService(config, store, workspaces, runner);
+const explainer = new ArkTraceExplainer(config);
+const service = new AgentService(config, store, workspaces, runner, explainer);
 await service.initialize();
 
 const app = await createApp(config, service);

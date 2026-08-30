@@ -90,4 +90,6 @@ export const api = {
     ),
   run: (id: string) => request<{ run: AgentRun }>("/api/runs/" + id),
   trace: (id: string) => request<RunTrace>("/api/runs/" + id + "/trace"),
+  explainRun: (id: string) =>
+    request<{ run: AgentRun }>("/api/runs/" + id + "/explain", { method: "POST" }),
 };
