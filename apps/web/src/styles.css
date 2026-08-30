@@ -177,6 +177,11 @@ button {
   background: #e4e2da;
 }
 
+.button-ghost.button-active {
+  background: var(--purple-soft);
+  color: var(--purple-dark);
+}
+
 .button-danger {
   background: #f7e9e7;
   color: #ae4646;
@@ -1096,6 +1101,82 @@ textarea:focus {
   color: var(--muted);
 }
 
+.runs-panel {
+  max-width: 1180px;
+  margin: 0 auto 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--paper);
+  box-shadow: 0 12px 36px rgba(43, 42, 38, 0.06);
+  overflow: hidden;
+}
+
+.runs-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.runs-panel-header h3 {
+  margin: 3px 0 0;
+  font-size: 14px;
+  font-family: ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  letter-spacing: -0.02em;
+}
+
+.runs-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.runs-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: none;
+  background: none;
+  padding: 9px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 11px;
+  color: var(--ink);
+}
+
+.runs-row:hover {
+  background: #f0eeea;
+}
+
+.runs-row-active {
+  background: var(--purple-soft);
+}
+
+.runs-row-active:hover {
+  background: var(--purple-soft);
+}
+
+.runs-row-prompt {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runs-row-time,
+.runs-row-duration {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 9px;
+}
+
 .trace-span-list {
   list-style: none;
   margin: 0;
@@ -1801,6 +1882,24 @@ textarea:focus {
 
 [data-theme="dark"] .trace-panel-header {
   border-bottom-color: var(--line);
+}
+
+[data-theme="dark"] .runs-panel {
+  background: var(--paper);
+  border-color: var(--line);
+}
+
+[data-theme="dark"] .runs-panel-header {
+  border-bottom-color: var(--line);
+}
+
+[data-theme="dark"] .runs-row:hover {
+  background: #242420;
+}
+
+[data-theme="dark"] .runs-row-active,
+[data-theme="dark"] .runs-row-active:hover {
+  background: #2e2a45;
 }
 
 [data-theme="dark"] .trace-span-row:hover {

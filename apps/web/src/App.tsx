@@ -265,6 +265,74 @@ function TracePanel({
   );
 }
 
+function runDuration(run: AgentRun): string {
+  if (!run.startedAt || !run.completedAt) return "…";
+  const ms = new Date(run.completedAt).getTime() - new Date(run.startedAt).getTime();
+  return ms < 1000 ? ms + "ms" : (ms / 1000).toFixed(1) + "s";
+}
+
+function RunsPanel({
+  runs,
+  loading,
+  error,
+  activeTraceRunId,
+  onViewTrace,
+  onClose,
+}: {
+  runs: AgentRun[];
+  loading: boolean;
+  error: string | null;
+  activeTraceRunId: string | null;
+  onViewTrace: (runId: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <section className="runs-panel">
+      <div className="runs-panel-header">
+        <div>
+          <span className="eyebrow">Run history</span>
+          <h3>Runs</h3>
+        </div>
+        <button className="trace-panel-close" onClick={onClose} aria-label="Close run history">
+          ×
+        </button>
+      </div>
+      {loading && (
+        <div className="trace-panel-loading">
+          <Spinner /> Loading runs…
+        </div>
+      )}
+      {error && <div className="error-banner" role="alert">{error}</div>}
+      {!loading && !error && (
+        <ul className="runs-list">
+          {runs.length === 0 ? (
+            <li className="trace-empty">No runs yet.</li>
+          ) : (
+            runs.map((run) => (
+              <li key={run.id}>
+                <button
+                  className={
+                    "runs-row" + (run.id === activeTraceRunId ? " runs-row-active" : "")
+                  }
+                  onClick={() => onViewTrace(run.id)}
+                >
+                  <span className={"trace-status-chip trace-status-chip-" + run.status}>
+                    <span className="trace-status-dot" />
+                    {run.status}
+                  </span>
+                  <span className="runs-row-prompt">{run.prompt}</span>
+                  <span className="runs-row-time">{formatTime(run.createdAt)}</span>
+                  <span className="runs-row-duration">{runDuration(run)}</span>
+                </button>
+              </li>
+            ))
+          )}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 export default function App() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -290,15 +358,21 @@ export default function App() {
   );
   const [pendingDelete, setPendingDelete] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [showRuns, setShowRuns] = useState(false);
+  const [runsList, setRunsList] = useState<AgentRun[]>([]);
+  const [runsLoading, setRunsLoading] = useState(false);
+  const [runsError, setRunsError] = useState<string | null>(null);
 
   const messageEnd = useRef<HTMLDivElement>(null);
   const selectedIdRef = useRef<string | null>(null);
   const traceRunIdRef = useRef<string | null>(null);
+  const showRunsRef = useRef(false);
   const mountedRef = useRef(true);
   const pollingRunIds = useRef(new Set<string>());
   const toastTimerRef = useRef<number | null>(null);
   selectedIdRef.current = selectedId;
   traceRunIdRef.current = traceRunId;
+  showRunsRef.current = showRuns;
 
   const selected = useMemo(
     () => agents.find((agent) => agent.id === selectedId) ?? null,
@@ -325,6 +399,13 @@ export default function App() {
     const result = await api.messages(agentId);
     if (mountedRef.current && selectedIdRef.current === agentId) {
       setMessages(result.messages);
+    }
+  }, []);
+
+  const refreshRuns = useCallback(async (agentId: string) => {
+    const result = await api.runs(agentId);
+    if (mountedRef.current && selectedIdRef.current === agentId) {
+      setRunsList(result.runs);
     }
   }, []);
 
@@ -360,6 +441,9 @@ export default function App() {
     setTrace(null);
     setTraceError(null);
     setPendingDelete(false);
+    setShowRuns(false);
+    setRunsList([]);
+    setRunsError(null);
     if (!selectedId) {
       setMessages([]);
       return;
@@ -475,12 +559,40 @@ export default function App() {
         const result = await api.run(runId);
         if (selectedIdRef.current === agentId) setActiveRun(result.run);
         if (!["queued", "running"].includes(result.run.status)) {
-          await Promise.all([refreshMessages(agentId), refreshAgents()]);
+          await Promise.all([
+            refreshMessages(agentId),
+            refreshAgents(),
+            showRunsRef.current && selectedIdRef.current === agentId
+              ? refreshRuns(agentId)
+              : Promise.resolve(),
+          ]);
           return;
         }
       }
     } finally {
       pollingRunIds.current.delete(runId);
+    }
+  };
+
+  const toggleRuns = async () => {
+    if (!selected) return;
+    if (showRuns) {
+      setShowRuns(false);
+      return;
+    }
+    setShowRuns(true);
+    setRunsError(null);
+    setRunsLoading(true);
+    const agentId = selected.id;
+    try {
+      const result = await api.runs(agentId);
+      if (selectedIdRef.current === agentId) setRunsList(result.runs);
+    } catch (reason) {
+      if (selectedIdRef.current === agentId) {
+        setRunsError(reason instanceof Error ? reason.message : String(reason));
+      }
+    } finally {
+      if (selectedIdRef.current === agentId) setRunsLoading(false);
     }
   };
 
@@ -700,6 +812,13 @@ export default function App() {
               </div>
               <div className="header-actions">
                 <button
+                  className={"button button-ghost" + (showRuns ? " button-active" : "")}
+                  onClick={toggleRuns}
+                  disabled={busy}
+                >
+                  Runs
+                </button>
+                <button
                   className="button button-ghost"
                   onClick={() => setShowSettings((value) => !value)}
                   disabled={busy || selected.status === "busy"}
@@ -742,6 +861,17 @@ export default function App() {
                 )}
               </div>
             </header>
+
+            {showRuns && (
+              <RunsPanel
+                runs={runsList}
+                loading={runsLoading}
+                error={runsError}
+                activeTraceRunId={traceRunId}
+                onViewTrace={viewTrace}
+                onClose={() => setShowRuns(false)}
+              />
+            )}
 
             {showSettings && (
               <form className="settings-panel" onSubmit={saveAgent}>

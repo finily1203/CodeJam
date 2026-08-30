@@ -34,6 +34,7 @@ export interface Actor {
 export interface AgentRun {
   id: string;
   agentId: string;
+  traceId: string;
   status: RunStatus;
   prompt: string;
   output: string | null;
@@ -45,6 +46,8 @@ export interface AgentRun {
   } | null;
   initiatedBy: Actor;
   sessionId: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
   createdAt: string;
 }
 
