@@ -261,6 +261,13 @@ export class ContainerCodexRunner implements AgentRunner {
       "LANG",
       "LC_ALL",
       "XDG_RUNTIME_DIR",
+      "SystemRoot",
+      "windir",
+      "ComSpec",
+      "PATHEXT",
+      "USERPROFILE",
+      "TEMP",
+      "TMP",
     ] as const) {
       if (process.env[name] !== undefined) environment[name] = process.env[name];
     }
