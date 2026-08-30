@@ -152,6 +152,40 @@ describe("Agent lifecycle", () => {
     expect(() => service.getAgentVersions(agent.id)).toThrow();
   });
 
+  it("starts an Agent with no budget limit and zero spend, accumulating cost as Runs complete", async () => {
+    const service = await makeService();
+    const agent = await service.createAgent({ name: "Spender" });
+    expect(agent.budgetLimitUsd).toBeNull();
+    expect(agent.totalSpendUsd).toBe(0);
+
+    const first = await service.sendMessage(agent.id, "first");
+    await expect.poll(() => service.getRun(first.run.id).status).toBe("completed");
+    expect(service.getRun(first.run.id).estimatedCostUsd).toBe(0.000014);
+    expect(service.getAgent(agent.id).totalSpendUsd).toBe(0.000014);
+
+    const second = await service.sendMessage(agent.id, "second");
+    await expect.poll(() => service.getRun(second.run.id).status).toBe("completed");
+    expect(service.getAgent(agent.id).totalSpendUsd).toBe(0.000028);
+  });
+
+  it("rejects a new Run once the Agent's budget limit is reached, and lifts the block when the limit is raised", async () => {
+    const service = await makeService();
+    const agent = await service.createAgent({ name: "Capped" });
+    await service.updateAgent(agent.id, { budgetLimitUsd: 0 });
+    expect(service.getAgent(agent.id).budgetLimitUsd).toBe(0);
+
+    await expect(service.sendMessage(agent.id, "should be blocked")).rejects.toMatchObject({
+      statusCode: 402,
+    });
+
+    await service.updateAgent(agent.id, { budgetLimitUsd: 1 });
+    const { run } = await service.sendMessage(agent.id, "should be allowed now");
+    await expect.poll(() => service.getRun(run.id).status).toBe("completed");
+
+    await service.updateAgent(agent.id, { budgetLimitUsd: null });
+    expect(service.getAgent(agent.id).budgetLimitUsd).toBeNull();
+  });
+
   it("persists a playground conversation", async () => {
     const service = await makeService();
     const agent = await service.createAgent({ name: "Coder" });
@@ -185,11 +219,13 @@ describe("Agent lifecycle", () => {
       sessionId: service.getRun(run.id).sessionId,
       usage: service.getRun(run.id).usage,
       environment: service.getRun(run.id).environment,
+      estimatedCostUsd: service.getRun(run.id).estimatedCostUsd,
       agentVersion: service.getRun(run.id).agentVersion,
       spans: service.getRun(run.id).spans,
     });
     expect(trace.spans).toHaveLength(1);
     expect(trace.usage).toEqual({ inputTokens: 12, outputTokens: 5 });
+    expect(trace.estimatedCostUsd).toBe(0.000014);
     expect(trace.agentVersion).toBe(1);
     expect(trace.environment).toEqual({
       arkModel: "ep-test",

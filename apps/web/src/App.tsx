@@ -57,6 +57,14 @@ function formatTokenCount(n: number): string {
   return n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, "") + "k" : String(n);
 }
 
+function formatUsd(amount: number): string {
+  if (amount === 0) return "$0.00";
+  // Sub-cent estimates round to $0.00 with 2 decimals, which reads as "free"
+  // for a Run that plainly cost something - show enough decimals to be
+  // honest at the token-cost scale this platform actually operates at.
+  return amount < 0.01 ? "$" + amount.toFixed(6) : "$" + amount.toFixed(2);
+}
+
 function formatUsage(usage: RunTrace["usage"]): string {
   if (!usage) return "";
   const parts: string[] = [];
@@ -266,6 +274,14 @@ function TracePanel({
                 <span className="trace-meta-icon">v</span>
                 {trace.agentVersion}
               </span>
+              {trace.estimatedCostUsd != null && (
+                <span
+                  className="trace-meta-tag"
+                  title="Estimated cost of this Run (not an invoice)"
+                >
+                  {formatUsd(trace.estimatedCostUsd)}
+                </span>
+              )}
             </div>
             <div className="trace-panel-actions">
               <button
@@ -456,6 +472,7 @@ export default function App() {
   const [showCreate, setShowCreate] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [form, setForm] = useState(emptyForm);
+  const [budgetInput, setBudgetInput] = useState("");
   const [prompt, setPrompt] = useState("");
   const [activeRun, setActiveRun] = useState<AgentRun | null>(null);
   const [busy, setBusy] = useState(false);
@@ -497,6 +514,8 @@ export default function App() {
     () => agents.find((agent) => agent.id === selectedId) ?? null,
     [agents, selectedId],
   );
+  const budgetExceeded =
+    selected?.budgetLimitUsd != null && selected.totalSpendUsd >= selected.budgetLimitUsd;
 
   const showToast = useCallback((msg: string) => {
     if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
@@ -593,6 +612,7 @@ export default function App() {
         description: selected.description,
         instructions: selected.instructions,
       });
+      setBudgetInput(selected.budgetLimitUsd != null ? String(selected.budgetLimitUsd) : "");
     }
   }, [selected]);
 
@@ -621,11 +641,21 @@ export default function App() {
   const saveAgent = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!selected) return;
+    const trimmedBudget = budgetInput.trim();
+    let budgetLimitUsd: number | null = null;
+    if (trimmedBudget) {
+      const parsed = Number(trimmedBudget);
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        setError("Budget limit must be a non-negative number, or left blank for unlimited.");
+        return;
+      }
+      budgetLimitUsd = parsed;
+    }
     setBusy(true);
     setError(null);
     const agentId = selected.id;
     try {
-      await api.updateAgent(agentId, form);
+      await api.updateAgent(agentId, { ...form, budgetLimitUsd });
       await refreshAgents();
       if (showVersions && selectedIdRef.current === agentId) {
         const result = await api.versions(agentId);
@@ -1082,6 +1112,25 @@ export default function App() {
                     maxLength={10_000}
                   />
                 </label>
+                <div className="form-grid">
+                  <label>
+                    Budget limit (USD)
+                    <input
+                      value={budgetInput}
+                      onChange={(event) => setBudgetInput(event.target.value)}
+                      placeholder="Unlimited"
+                      inputMode="decimal"
+                    />
+                  </label>
+                  <div className="spend-readout">
+                    <span className="eyebrow">Estimated spend</span>
+                    <strong className={budgetExceeded ? "spend-over" : undefined}>
+                      {formatUsd(selected.totalSpendUsd)}
+                      {selected.budgetLimitUsd != null &&
+                        " / " + formatUsd(selected.budgetLimitUsd)}
+                    </strong>
+                  </div>
+                </div>
                 <div className="panel-footer">
                   <code>{selected.workspacePath}</code>
                   <button className="button button-primary" disabled={busy}>
@@ -1194,6 +1243,13 @@ export default function App() {
               )}
 
               <form className="composer" onSubmit={sendMessage}>
+                {budgetExceeded && (
+                  <div className="budget-banner" role="alert">
+                    Budget reached ({formatUsd(selected.totalSpendUsd)} of{" "}
+                    {formatUsd(selected.budgetLimitUsd ?? 0)}) — raise or clear the limit in
+                    Settings to continue.
+                  </div>
+                )}
                 <textarea
                   value={prompt}
                   onChange={(event) => setPrompt(event.target.value)}
@@ -1204,13 +1260,16 @@ export default function App() {
                     }
                   }}
                   placeholder={
-                    selected.status === "stopped"
-                      ? "Start this Agent to continue…"
-                      : "Describe what you want the Agent to do…"
+                    budgetExceeded
+                      ? "Budget reached — raise or clear the limit to continue…"
+                      : selected.status === "stopped"
+                        ? "Start this Agent to continue…"
+                        : "Describe what you want the Agent to do…"
                   }
                   disabled={
                     selected.status === "stopped" ||
                     selected.status === "busy" ||
+                    budgetExceeded ||
                     activeRun != null && ["queued", "running"].includes(activeRun.status)
                   }
                   rows={3}
@@ -1225,6 +1284,7 @@ export default function App() {
                       !prompt.trim() ||
                       selected.status === "stopped" ||
                       selected.status === "busy" ||
+                      budgetExceeded ||
                       (activeRun != null && ["queued", "running"].includes(activeRun.status))
                     }
                     aria-label="Send message"

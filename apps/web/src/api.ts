@@ -51,7 +51,12 @@ export const api = {
     }),
   updateAgent: (
     id: string,
-    body: { name: string; description: string; instructions: string },
+    body: {
+      name: string;
+      description: string;
+      instructions: string;
+      budgetLimitUsd?: number | null;
+    },
   ) =>
     request<{ agent: Agent }>("/api/agents/" + id, {
       method: "PATCH",

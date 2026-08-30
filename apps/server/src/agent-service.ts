@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { AppConfig } from "./config.js";
 import { isArkConfigured } from "./config.js";
+import { estimateCostUsd, type CostRates } from "./cost.js";
 import { HttpError, PolicyViolationError, RunCancelledError } from "./errors.js";
 import { redact } from "./redact.js";
 import { JsonStore } from "./store.js";
@@ -84,6 +85,8 @@ export class AgentService {
       codexThreadId: null,
       lastError: null,
       version: 1,
+      totalSpendUsd: 0,
+      budgetLimitUsd: null,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -130,6 +133,13 @@ export class AgentService {
       agent.name = nextName;
       agent.description = nextDescription;
       agent.instructions = nextInstructions;
+      // A budget change is a resource-control knob, not part of the Agent's
+      // behavior/instructions, so it does not bump version or appear in
+      // changedFields - that history is for "what the Agent does," not
+      // "what it's allowed to spend."
+      if (input.budgetLimitUsd !== undefined) {
+        agent.budgetLimitUsd = input.budgetLimitUsd;
+      }
       agent.lastError = null;
       agent.updatedAt = now();
       if (changedFields.length > 0) {
@@ -208,6 +218,7 @@ export class AgentService {
       sessionId: run.sessionId,
       usage: run.usage,
       environment: run.environment,
+      estimatedCostUsd: run.estimatedCostUsd,
       agentVersion: run.agentVersion,
       spans: run.spans,
     };
@@ -220,6 +231,13 @@ export class AgentService {
       runtimeProvider: this.config.runtimeProvider,
       containerEngine:
         this.config.runtimeProvider === "container" ? this.config.containerEngine : null,
+    };
+  }
+
+  private currentCostRates(): CostRates {
+    return {
+      inputPerMillionUsd: this.config.costPerMillionInputTokensUsd,
+      outputPerMillionUsd: this.config.costPerMillionOutputTokensUsd,
     };
   }
 
@@ -263,6 +281,8 @@ export class AgentService {
       usage: null,
       spans: [],
       environment: this.currentRunEnvironment(),
+      // Only known once usage is reported at completion.
+      estimatedCostUsd: null,
       // Placeholder, overwritten below inside the mutate callback with the
       // Agent's actual current version — the two must be read atomically
       // together with the status checks, so there is no real value to put
@@ -299,6 +319,17 @@ export class AgentService {
       }
       if (storedAgent.status === "busy") {
         throw new HttpError(409, "This Agent is already running");
+      }
+      if (
+        storedAgent.budgetLimitUsd !== null &&
+        storedAgent.totalSpendUsd >= storedAgent.budgetLimitUsd
+      ) {
+        throw new HttpError(
+          402,
+          "This Agent has reached its budget limit ($" +
+            storedAgent.budgetLimitUsd.toFixed(2) +
+            "). Raise or clear the limit to continue.",
+        );
       }
       // Reuse the Agent's existing Codex thread as this Run's session, if
       // one already exists; a brand-new Agent has none yet, and this Run's
@@ -378,6 +409,7 @@ export class AgentService {
         // and this is the last point before it becomes persisted, displayed
         // conversation history.
         const output = redact(result.output);
+        const estimatedCostUsd = estimateCostUsd(result.usage, this.currentCostRates());
         await this.store.mutate((database) => {
           const storedRun = database.runs.find((item) => item.id === run.id);
           const agent = database.agents.find((item) => item.id === agentAtStart.id);
@@ -385,9 +417,13 @@ export class AgentService {
           storedRun.status = "completed";
           storedRun.output = output;
           storedRun.usage = result.usage;
+          storedRun.estimatedCostUsd = estimatedCostUsd;
           storedRun.spans = [...recoverySpans, ...result.spans];
           storedRun.sessionId ??= result.threadId;
           storedRun.completedAt = completedAt;
+          if (estimatedCostUsd !== null) {
+            agent.totalSpendUsd += estimatedCostUsd;
+          }
           database.messages.push({
             id: randomUUID(),
             agentId: agent.id,

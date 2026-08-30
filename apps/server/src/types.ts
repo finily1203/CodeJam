@@ -13,6 +13,10 @@ export interface Agent {
   lastError: string | null;
   /** Bumped on every updateAgent call; 1 for a never-edited Agent. */
   version: number;
+  /** Cumulative estimated cost (USD) of every completed Run this Agent has produced. */
+  totalSpendUsd: number;
+  /** Null means unlimited. sendMessage rejects new Runs once totalSpendUsd reaches this. */
+  budgetLimitUsd: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -86,6 +90,8 @@ export interface AgentRun {
   spans: RunSpan[];
   /** Null only for a Run persisted before this field existed. */
   environment: RunEnvironment | null;
+  /** Null until usage is known (still running, or failed before usage was reported) or for a Run that predates cost tracking. */
+  estimatedCostUsd: number | null;
   /** The Agent's version when this Run started. 1 for any Run that predates versioning — true, not a guess, since no Agent had more than one version before this field existed. */
   agentVersion: number;
   initiatedBy: Actor;
@@ -101,7 +107,7 @@ export interface AgentRun {
   createdAt: string;
 }
 
-export const DATABASE_VERSION = 6;
+export const DATABASE_VERSION = 7;
 
 export interface Database {
   version: typeof DATABASE_VERSION;
@@ -121,6 +127,8 @@ export interface UpdateAgentInput {
   name?: string | undefined;
   description?: string | undefined;
   instructions?: string | undefined;
+  /** undefined leaves it unchanged; null clears it (unlimited). */
+  budgetLimitUsd?: number | null | undefined;
 }
 
 export type SpanCategory =
@@ -151,6 +159,7 @@ export interface RunTrace {
   sessionId: string | null;
   usage: RunUsage | null;
   environment: RunEnvironment | null;
+  estimatedCostUsd: number | null;
   agentVersion: number;
   spans: RunSpan[];
 }
