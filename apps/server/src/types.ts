@@ -112,6 +112,7 @@ export interface RunTrace {
   status: RunStatus;
   initiatedBy: Actor;
   sessionId: string | null;
+  usage: RunUsage | null;
   spans: RunSpan[];
 }
 
