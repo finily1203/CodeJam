@@ -15,15 +15,16 @@ export class WorkspaceManager {
   }
 
   async create(agent: Agent): Promise<void> {
-    await mkdir(agent.workspacePath, { recursive: false });
+    const workspacePath = this.workspacePath(agent.id);
+    await mkdir(workspacePath, { recursive: false });
     await this.writeInstructions(agent);
     await writeFile(
-      path.join(agent.workspacePath, ".gitignore"),
+      path.join(workspacePath, ".gitignore"),
       [".codex/", "node_modules/", "dist/", ".env", "*.log", ""].join("\n"),
       "utf8",
     );
     await writeFile(
-      path.join(agent.workspacePath, "README.md"),
+      path.join(workspacePath, "README.md"),
       [
         "# " + agent.name + " workspace",
         "",
@@ -59,7 +60,11 @@ export class WorkspaceManager {
     ]
       .filter((line, index, lines) => !(line === "" && lines[index - 1] === ""))
       .join("\n");
-    await writeFile(path.join(agent.workspacePath, "AGENTS.md"), content, "utf8");
+    await writeFile(
+      path.join(this.workspacePath(agent.id), "AGENTS.md"),
+      content,
+      "utf8",
+    );
   }
 
   async archive(agent: Agent): Promise<string> {
@@ -69,7 +74,7 @@ export class WorkspaceManager {
       ".deleted",
       agent.id + "-" + timestamp,
     );
-    await rename(agent.workspacePath, destination);
+    await rename(this.workspacePath(agent.id), destination);
     return destination;
   }
 }

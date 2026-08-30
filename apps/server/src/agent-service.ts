@@ -301,7 +301,7 @@ export class AgentService {
         }
         const result = await this.runner.run({
           agentId: agentAtStart.id,
-          workspacePath: agentAtStart.workspacePath,
+          workspacePath: this.workspaces.workspacePath(agentAtStart.id),
           prompt: run.prompt,
           threadId: agentAtStart.codexThreadId,
         });
