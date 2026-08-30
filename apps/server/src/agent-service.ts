@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { detectAnomalies } from "./anomaly.js";
 import type { AppConfig } from "./config.js";
 import { isArkConfigured } from "./config.js";
 import { estimateCostUsd, type CostRates } from "./cost.js";
@@ -414,11 +415,35 @@ export class AgentService {
           const storedRun = database.runs.find((item) => item.id === run.id);
           const agent = database.agents.find((item) => item.id === agentAtStart.id);
           if (!storedRun || !agent) return;
+          const durationMs = storedRun.startedAt
+            ? new Date(completedAt).getTime() - new Date(storedRun.startedAt).getTime()
+            : null;
+          // The Agent's own prior completed Runs are the anomaly baseline -
+          // read here, inside the same mutate transaction, so it reflects
+          // exactly what's persisted rather than a snapshot from before
+          // this Run started.
+          const priorSamples = database.runs
+            .filter(
+              (item) =>
+                item.agentId === agent.id && item.status === "completed" && item.id !== run.id,
+            )
+            .map((item) => ({
+              costUsd: item.estimatedCostUsd,
+              durationMs:
+                item.startedAt && item.completedAt
+                  ? new Date(item.completedAt).getTime() - new Date(item.startedAt).getTime()
+                  : null,
+            }));
+          const anomalySpans = detectAnomalies(
+            { costUsd: estimatedCostUsd, durationMs },
+            priorSamples,
+            completedAt,
+          );
           storedRun.status = "completed";
           storedRun.output = output;
           storedRun.usage = result.usage;
           storedRun.estimatedCostUsd = estimatedCostUsd;
-          storedRun.spans = [...recoverySpans, ...result.spans];
+          storedRun.spans = [...recoverySpans, ...result.spans, ...anomalySpans];
           storedRun.sessionId ??= result.threadId;
           storedRun.completedAt = completedAt;
           if (estimatedCostUsd !== null) {
