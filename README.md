@@ -61,7 +61,7 @@ returns.
 | **Agent versioning** | Every edit to name/description/instructions bumps `Agent.version` and records an `AgentVersion` snapshot with `changedFields`. Every Run captures the Agent's version at send time, so history stays honest after later edits. | `agent-service.ts` |
 | **Cost/duration anomaly flagging** | Each Run is compared against this Agent's own trailing average (3+ prior completed Runs); a >3x outlier on cost or duration is appended as a `warning` span, reusing the existing trace UI. | `anomaly.ts` |
 | **Version-aware trace diffing** | The trace panel shows "this Run used v2 (changed: instructions)" with an expandable side-by-side comparison against the previous version's values — connects the versioning and tracing features into one view. | `agent-service.ts` (`buildVersionDiff`), `App.tsx` |
-| **"Explain this trace"** | One extra Ark Responses API call, made on demand and cached, reads a Run's status/cost/usage/spans and writes a 1-2 sentence plain-English summary of what happened, why it cost what it cost, and why it failed if it failed. | `ark-explainer.ts` |
+| **"Explain this trace"** | One extra Ark Responses API call, made on demand and cached, reads a Run's status/cost/usage/spans and writes a 1-2 sentence plain-English summary of what happened, why it cost what it cost, and why it failed if it failed. It's a real Ark call, so its own token cost is added to the Agent's `totalSpendUsd` (charged once, not per view) — but not to the Run's own `estimatedCostUsd`, since it's a separate call from the Run it's explaining. | `ark-explainer.ts` |
 
 ## Limitations
 

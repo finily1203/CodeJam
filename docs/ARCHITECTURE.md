@@ -84,7 +84,10 @@ process, not blocking the syscall.
    `AgentVersion` history to show what changed since the previous version.
 9. **Explain (on demand)** — `POST /api/runs/:id/explain` sends the Run's
    status/cost/usage/spans to Ark's Responses API once and caches the
-   returned 1-2 sentence summary on the Run.
+   returned 1-2 sentence summary on the Run. This is itself a real Ark call,
+   so its token cost is added to `Agent.totalSpendUsd` (once, not per view)
+   — but not to the Run's own `estimatedCostUsd`, and it is not itself
+   gated by the budget check in step 2.
 
 ## Components
 
