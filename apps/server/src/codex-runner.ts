@@ -1,7 +1,9 @@
 import type { ChildProcess } from "node:child_process";
 import crossSpawn from "cross-spawn";
 import type { AppConfig } from "./config.js";
-import { RunCancelledError } from "./errors.js";
+import { PolicyViolationError, RunCancelledError } from "./errors.js";
+import { evaluateCommandPolicy } from "./policy.js";
+import { redact } from "./redact.js";
 import type {
   AgentRunner,
   RunSpan,
@@ -16,12 +18,31 @@ export interface ParsedEvents {
   usage: RunUsage | null;
   errors: string[];
   spans: RunSpan[];
+  /**
+   * Set the moment a command is observed violating the Runtime's command
+   * policy (see policy.ts). Runners poll this after each parsed line and
+   * terminate the process as soon as it is set — see the module doc comment
+   * on policy.ts for why this is containment, not prevention.
+   */
+  policyViolation: string | null;
 }
 
 const MAX_SPAN_DETAIL_LENGTH = 2_000;
 
 function truncate(value: string, max = MAX_SPAN_DETAIL_LENGTH): string {
-  return value.length > max ? value.slice(0, max) + " …(truncated)" : value;
+  const safe = redact(value);
+  return safe.length > max ? safe.slice(0, max) + " …(truncated)" : safe;
+}
+
+/**
+ * Codex's "error" item type is also used for non-fatal advisories, not only
+ * genuine failures. Right now the one known case is a custom/unrecognized
+ * model ID falling back to conservative built-in metadata — informational,
+ * does not fail the Run. Matched narrowly on Codex's own wording rather than
+ * broadly, so a real error is never miscategorized by accident.
+ */
+function isBenignAdvisory(message: string): boolean {
+  return /model metadata for .* not found/i.test(message);
 }
 
 function openModelCallSpan(spans: RunSpan[]): RunSpan | undefined {
@@ -91,19 +112,46 @@ export function parseCodexEventLine(line: string, parsed: ParsedEvents): void {
     if (item.type === "command_execution") {
       const itemId = typeof item.id === "string" ? item.id : "tool-" + parsed.spans.length;
       const parentTurn = openModelCallSpan(parsed.spans);
+      const command = typeof item.command === "string" ? item.command : "";
+      const decision = command ? evaluateCommandPolicy(command) : null;
+
       parsed.spans.push({
         id: itemId,
         parentId: parentTurn?.id ?? null,
         category: "tool_call",
-        label:
-          typeof item.command === "string"
-            ? truncate(item.command, 200)
-            : "command execution",
+        label: command ? truncate(command, 200) : "command execution",
         startedAt: now,
-        endedAt: null,
-        status: "running",
-        detail: null,
+        endedAt: decision ? now : null,
+        status: decision ? "failed" : "running",
+        detail: decision
+          ? "Denied by policy (" + decision.id + "): " + decision.reason
+          : null,
       });
+
+      if (decision) {
+        parsed.spans.push({
+          id: itemId + "-policy",
+          parentId: parentTurn?.id ?? null,
+          category: "policy_decision",
+          label: "Policy: " + decision.id,
+          startedAt: now,
+          endedAt: now,
+          status: "failed",
+          detail: truncate(
+            "Denied command: " +
+              command +
+              "\nRule: " +
+              decision.id +
+              "\nReason: " +
+              decision.reason +
+              "\nResult: Runtime terminated to contain further actions.",
+          ),
+        });
+        // Runners poll this field after each parsed line and terminate the
+        // process immediately; keep the first violation if several arrive
+        // before termination completes.
+        parsed.policyViolation ??= decision.reason;
+      }
     }
   }
 
@@ -140,17 +188,36 @@ export function parseCodexEventLine(line: string, parsed: ParsedEvents): void {
     } else if (item.type === "error") {
       const message =
         typeof item.message === "string" ? item.message : "Item reported an error";
-      parsed.errors.push(message);
-      parsed.spans.push({
-        id: itemId ?? "item-error-" + parsed.spans.length,
-        parentId: parentTurn?.id ?? null,
-        category: "error",
-        label: "Item error",
-        startedAt: now,
-        endedAt: now,
-        status: "failed",
-        detail: truncate(message),
-      });
+      if (isBenignAdvisory(message)) {
+        // Codex reuses its "error" item type for informational notices, not
+        // just genuine failures — this specific one (an unrecognized custom
+        // model ID falling back to conservative metadata) does not fail the
+        // Run. Recording it as a failed ERROR span would misrepresent a
+        // successful Run's trace. Still captured — just not as a failure —
+        // so the evidence isn't silently dropped either.
+        parsed.spans.push({
+          id: itemId ?? "item-warning-" + parsed.spans.length,
+          parentId: parentTurn?.id ?? null,
+          category: "warning",
+          label: "Advisory",
+          startedAt: now,
+          endedAt: now,
+          status: "completed",
+          detail: truncate(message),
+        });
+      } else {
+        parsed.errors.push(message);
+        parsed.spans.push({
+          id: itemId ?? "item-error-" + parsed.spans.length,
+          parentId: parentTurn?.id ?? null,
+          category: "error",
+          label: "Item error",
+          startedAt: now,
+          endedAt: now,
+          status: "failed",
+          detail: truncate(message),
+        });
+      }
     }
   }
 
@@ -255,6 +322,7 @@ export class CodexRunner implements AgentRunner {
       cancelled: false,
       timedOut: false,
       outputExceeded: false,
+      policyViolated: false,
       settled,
       forceKillTimer: null as NodeJS.Timeout | null,
     };
@@ -266,6 +334,7 @@ export class CodexRunner implements AgentRunner {
       usage: null,
       errors: [],
       spans: [],
+      policyViolation: null,
     };
     let stdout = "";
     let stderr = "";
@@ -284,6 +353,10 @@ export class CodexRunner implements AgentRunner {
         stdout = lines.pop() ?? "";
         for (const line of lines) {
           parseCodexEventLine(line, parsed);
+          if (parsed.policyViolation && !active.policyViolated) {
+            active.policyViolated = true;
+            this.terminate(active);
+          }
         }
       } else {
         stderr += chunk.toString("utf8");
@@ -309,6 +382,14 @@ export class CodexRunner implements AgentRunner {
       });
       if (stdout.trim()) {
         parseCodexEventLine(stdout.trim(), parsed);
+        if (parsed.policyViolation && !active.policyViolated) {
+          active.policyViolated = true;
+          this.terminate(active);
+        }
+      }
+      if (active.policyViolated) {
+        closeDanglingSpans(parsed.spans, new Date().toISOString());
+        throw new PolicyViolationError(parsed.policyViolation ?? "command denied", parsed.spans);
       }
       if (active.cancelled) {
         throw new RunCancelledError();

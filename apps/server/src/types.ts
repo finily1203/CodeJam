@@ -30,21 +30,42 @@ export interface RunUsage {
   outputTokens?: number;
 }
 
+/**
+ * A minimal mock identity: who or what caused a Run to happen. The platform
+ * is a single-user POC with no real authentication, so "human" actors are
+ * self-reported (a name the browser sends), not verified. This is enough to
+ * attribute a Run to a principal in the trace without building real auth.
+ */
+export interface Actor {
+  type: "human" | "agent";
+  id: string;
+  name: string;
+}
+
 export interface AgentRun {
   id: string;
   agentId: string;
+  traceId: string;
   status: RunStatus;
   prompt: string;
   output: string | null;
   error: string | null;
   usage: RunUsage | null;
   spans: RunSpan[];
+  initiatedBy: Actor;
+  /**
+   * The Codex thread this Run participated in — Codex's own session
+   * concept, which is what actually makes "the same conversation" continue
+   * across Runs (see AgentService.sendMessage). Null until the Agent's
+   * first successful Run establishes one.
+   */
+  sessionId: string | null;
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
 }
 
-export const DATABASE_VERSION = 2;
+export const DATABASE_VERSION = 4;
 
 export interface Database {
   version: typeof DATABASE_VERSION;
@@ -65,7 +86,13 @@ export interface UpdateAgentInput {
   instructions?: string | undefined;
 }
 
-export type SpanCategory = "model_call" | "tool_call" | "reasoning" | "error";
+export type SpanCategory =
+  | "model_call"
+  | "tool_call"
+  | "reasoning"
+  | "error"
+  | "policy_decision"
+  | "warning";
 export type SpanStatus = "running" | "completed" | "failed";
 
 export interface RunSpan {
@@ -83,6 +110,8 @@ export interface RunTrace {
   runId: string;
   agentId: string;
   status: RunStatus;
+  initiatedBy: Actor;
+  sessionId: string | null;
   spans: RunSpan[];
 }
 

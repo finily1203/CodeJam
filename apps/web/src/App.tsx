@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getActorName, setActorName } from "./actor";
 import { api, ApiError, setAuthToken } from "./api";
 import type { Agent, AgentRun, Message, RunSpan, RunTrace, SystemInfo } from "./types";
 
@@ -40,6 +41,8 @@ const spanCategoryLabels: Record<RunSpan["category"], string> = {
   tool_call: "Tool",
   reasoning: "Reasoning",
   error: "Error",
+  policy_decision: "Policy",
+  warning: "Warning",
 };
 
 function spanDuration(span: RunSpan): string {
@@ -48,10 +51,71 @@ function spanDuration(span: RunSpan): string {
   return ms < 1000 ? ms + "ms" : (ms / 1000).toFixed(1) + "s";
 }
 
-function TraceSpanRow({ span }: { span: RunSpan }) {
+// RunSpan.parentId links each span to the turn (or step) it happened inside.
+// Reassembling that into a tree — instead of rendering the flat push-order
+// array — is what lets the panel show "this tool call happened inside this
+// model turn" rather than a bare chronological log.
+interface SpanNode {
+  span: RunSpan;
+  children: SpanNode[];
+}
+
+function buildSpanTree(spans: RunSpan[]): SpanNode[] {
+  const nodesById = new Map<string, SpanNode>();
+  for (const span of spans) nodesById.set(span.id, { span, children: [] });
+  const roots: SpanNode[] = [];
+  for (const span of spans) {
+    const node = nodesById.get(span.id)!;
+    const parent = span.parentId ? nodesById.get(span.parentId) : undefined;
+    if (parent) parent.children.push(node);
+    else roots.push(node);
+  }
+  return roots;
+}
+
+// Keeps a branch when the "failures only" filter is on if it — or any
+// descendant — failed, so a denied tool call still shows under the model
+// turn it happened in instead of floating without context.
+function pruneToFailures(nodes: SpanNode[]): SpanNode[] {
+  const kept: SpanNode[] = [];
+  for (const node of nodes) {
+    const children = pruneToFailures(node.children);
+    if (node.span.status === "failed" || children.length > 0) {
+      kept.push({ span: node.span, children });
+    }
+  }
+  return kept;
+}
+
+function TraceSpanRow({
+  span,
+  depth,
+  highlighted,
+}: {
+  span: RunSpan;
+  depth: number;
+  highlighted: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
+  const rowRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (highlighted) {
+      rowRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      setExpanded(true);
+    }
+  }, [highlighted]);
+
   return (
-    <li className={"trace-span trace-span-" + span.status}>
+    <div
+      ref={rowRef}
+      className={
+        "trace-span trace-span-" +
+        span.status +
+        (highlighted ? " trace-span-highlighted" : "")
+      }
+      style={{ marginLeft: depth * 18 }}
+    >
       <button
         className="trace-span-row"
         onClick={() => setExpanded((value) => !value)}
@@ -65,7 +129,34 @@ function TraceSpanRow({ span }: { span: RunSpan }) {
         <span className={"trace-span-status trace-status-" + span.status}>{span.status}</span>
       </button>
       {expanded && span.detail && <pre className="trace-span-detail">{span.detail}</pre>}
-    </li>
+    </div>
+  );
+}
+
+function TraceSpanTree({
+  nodes,
+  depth,
+  highlightId,
+}: {
+  nodes: SpanNode[];
+  depth: number;
+  highlightId: string | null;
+}) {
+  return (
+    <>
+      {nodes.map((node) => (
+        <div key={node.span.id} className="trace-span-branch">
+          <TraceSpanRow
+            span={node.span}
+            depth={depth}
+            highlighted={node.span.id === highlightId}
+          />
+          {node.children.length > 0 && (
+            <TraceSpanTree nodes={node.children} depth={depth + 1} highlightId={highlightId} />
+          )}
+        </div>
+      ))}
+    </>
   );
 }
 
@@ -80,11 +171,51 @@ function TracePanel({
   error: string | null;
   onClose: () => void;
 }) {
+  const [failuresOnly, setFailuresOnly] = useState(false);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+
+  const tree = useMemo(() => (trace ? buildSpanTree(trace.spans) : []), [trace]);
+  const visibleTree = failuresOnly ? pruneToFailures(tree) : tree;
+  const firstFailure = trace?.spans.find((span) => span.status === "failed") ?? null;
+
+  const jumpToFailure = () => {
+    if (!firstFailure) return;
+    const id = firstFailure.id;
+    setHighlightId(id);
+    window.setTimeout(() => {
+      setHighlightId((current) => (current === id ? null : current));
+    }, 2500);
+  };
+
   return (
     <section className="trace-panel">
       <div className="trace-panel-header">
         <span className="eyebrow">Middleware evidence</span>
         <h3>Run trace{trace ? " · " + trace.status : ""}</h3>
+        {trace && (
+          <span className="trace-initiator">Initiated by {trace.initiatedBy.name}</span>
+        )}
+        {trace && (
+          <span className="trace-session" title={trace.sessionId ?? undefined}>
+            {trace.sessionId ? "Session " + trace.sessionId.slice(0, 8) : "New session"}
+          </span>
+        )}
+        <button
+          className="trace-jump-button"
+          onClick={jumpToFailure}
+          disabled={!firstFailure}
+          title={firstFailure ? "Scroll to the first failed step" : "No failed step in this Run"}
+        >
+          Jump to failure
+        </button>
+        <label className="trace-filter">
+          <input
+            type="checkbox"
+            checked={failuresOnly}
+            onChange={(event) => setFailuresOnly(event.target.checked)}
+          />
+          Failures only
+        </label>
         <button className="trace-panel-close" onClick={onClose} aria-label="Close trace">
           ×
         </button>
@@ -96,15 +227,15 @@ function TracePanel({
       )}
       {error && <div className="error-banner" role="alert">{error}</div>}
       {trace && !loading && (
-        <ol className="trace-span-list">
-          {trace.spans.length === 0 ? (
-            <li className="trace-empty">
+        <div className="trace-span-list">
+          {visibleTree.length === 0 ? (
+            <div className="trace-empty">
               No spans recorded for this Run{trace.status === "failed" ? " — it failed before the Runtime reported any events." : "."}
-            </li>
+            </div>
           ) : (
-            trace.spans.map((span) => <TraceSpanRow key={span.id} span={span} />)
+            <TraceSpanTree nodes={visibleTree} depth={0} highlightId={highlightId} />
           )}
-        </ol>
+        </div>
       )}
     </section>
   );
@@ -128,6 +259,7 @@ export default function App() {
   const [trace, setTrace] = useState<RunTrace | null>(null);
   const [traceLoading, setTraceLoading] = useState(false);
   const [traceError, setTraceError] = useState<string | null>(null);
+  const [actorNameInput, setActorNameInput] = useState(() => getActorName());
   const messageEnd = useRef<HTMLDivElement>(null);
   const selectedIdRef = useRef<string | null>(null);
   const traceRunIdRef = useRef<string | null>(null);
@@ -590,9 +722,23 @@ export default function App() {
                   <span className="eyebrow">Playground</span>
                   <h2>Build something with your Agent</h2>
                 </div>
-                <div className="session-info">
-                  <span className="pulse" />
-                  {selected.codexThreadId ? "Session connected" : "New session"}
+                <div className="playground-topbar-right">
+                  <label className="actor-field" title="Self-reported identity attached to Runs you start">
+                    Acting as
+                    <input
+                      value={actorNameInput}
+                      onChange={(event) => {
+                        setActorNameInput(event.target.value);
+                        setActorName(event.target.value);
+                      }}
+                      placeholder="Unnamed operator"
+                      maxLength={80}
+                    />
+                  </label>
+                  <div className="session-info">
+                    <span className="pulse" />
+                    {selected.codexThreadId ? "Session connected" : "New session"}
+                  </div>
                 </div>
               </div>
 

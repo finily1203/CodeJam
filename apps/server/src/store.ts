@@ -32,7 +32,32 @@ export class JsonStore {
         for (const run of parsed.runs as Array<Record<string, unknown>>) {
           if (!Array.isArray(run.spans)) run.spans = [];
         }
-        parsed.version = DATABASE_VERSION;
+        parsed.version = 2;
+        migrated = true;
+      }
+      if (parsed.version === 2) {
+        for (const run of parsed.runs as Array<Record<string, unknown>>) {
+          if (!run.initiatedBy) {
+            run.initiatedBy = {
+              type: "human",
+              id: "unknown",
+              name: "Unknown (pre-identity run)",
+            };
+          }
+        }
+        parsed.version = 3;
+        migrated = true;
+      }
+      if (parsed.version === 3) {
+        // The Codex thread a pre-migration run participated in was never
+        // recorded on the Run itself (only the Agent's *current* thread was
+        // tracked), so there is no honest value to backfill beyond "unknown."
+        for (const run of parsed.runs as Array<Record<string, unknown>>) {
+          if (run.sessionId === undefined) {
+            run.sessionId = null;
+          }
+        }
+        parsed.version = 4;
         migrated = true;
       }
       if (parsed.version !== DATABASE_VERSION) {
