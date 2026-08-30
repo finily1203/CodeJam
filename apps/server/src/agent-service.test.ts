@@ -114,10 +114,17 @@ describe("Agent lifecycle", () => {
       initiatedBy: service.getRun(run.id).initiatedBy,
       sessionId: service.getRun(run.id).sessionId,
       usage: service.getRun(run.id).usage,
+      environment: service.getRun(run.id).environment,
       spans: service.getRun(run.id).spans,
     });
     expect(trace.spans).toHaveLength(1);
     expect(trace.usage).toEqual({ inputTokens: 12, outputTokens: 5 });
+    expect(trace.environment).toEqual({
+      arkModel: "ep-test",
+      codexSandboxMode: "workspace-write",
+      runtimeProvider: "local-process",
+      containerEngine: null,
+    });
   });
 
   it("establishes a session on the first successful Run and reuses it on the next one", async () => {

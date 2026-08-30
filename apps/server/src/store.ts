@@ -60,6 +60,19 @@ export class JsonStore {
         parsed.version = 4;
         migrated = true;
       }
+      if (parsed.version === 4) {
+        // Which model/sandbox mode/runtime a pre-migration run actually used
+        // was never recorded — only ever readable live from current config,
+        // which may have since changed. No honest value to backfill beyond
+        // null, same reasoning as sessionId above.
+        for (const run of parsed.runs as Array<Record<string, unknown>>) {
+          if (run.environment === undefined) {
+            run.environment = null;
+          }
+        }
+        parsed.version = 5;
+        migrated = true;
+      }
       if (parsed.version !== DATABASE_VERSION) {
         throw new Error("Unsupported database format");
       }

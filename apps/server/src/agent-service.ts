@@ -11,6 +11,7 @@ import type {
   AgentRunner,
   CreateAgentInput,
   Message,
+  RunEnvironment,
   RunSpan,
   RunTrace,
   UpdateAgentInput,
@@ -160,7 +161,18 @@ export class AgentService {
       initiatedBy: run.initiatedBy,
       sessionId: run.sessionId,
       usage: run.usage,
+      environment: run.environment,
       spans: run.spans,
+    };
+  }
+
+  private currentRunEnvironment(): RunEnvironment {
+    return {
+      arkModel: this.config.arkModel,
+      codexSandboxMode: this.config.codexSandboxMode,
+      runtimeProvider: this.config.runtimeProvider,
+      containerEngine:
+        this.config.runtimeProvider === "container" ? this.config.containerEngine : null,
     };
   }
 
@@ -203,6 +215,7 @@ export class AgentService {
       error: null,
       usage: null,
       spans: [],
+      environment: this.currentRunEnvironment(),
       initiatedBy,
       // Filled in below, inside the mutate callback, from the Agent's
       // current Codex thread — null here means "resolved below or, if this
