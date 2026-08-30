@@ -89,6 +89,21 @@ export class JsonStore {
         parsed.version = 6;
         migrated = true;
       }
+      if (parsed.version === 6) {
+        // Cost/budget tracking starts here rather than being reconstructed
+        // retroactively - spend for every Agent starts at zero and no
+        // budget is set (unlimited), the same "starts now" choice as the
+        // rest of this migration for fields with no honest historical value.
+        for (const agent of parsed.agents as Array<Record<string, unknown>>) {
+          if (agent.totalSpendUsd === undefined) agent.totalSpendUsd = 0;
+          if (agent.budgetLimitUsd === undefined) agent.budgetLimitUsd = null;
+        }
+        for (const run of parsed.runs as Array<Record<string, unknown>>) {
+          if (run.estimatedCostUsd === undefined) run.estimatedCostUsd = null;
+        }
+        parsed.version = 7;
+        migrated = true;
+      }
       if (parsed.version !== DATABASE_VERSION) {
         throw new Error("Unsupported database format");
       }

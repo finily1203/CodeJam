@@ -548,6 +548,22 @@ button {
   gap: 13px;
 }
 
+.spend-readout {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  justify-content: center;
+}
+
+.spend-readout strong {
+  font-size: 15px;
+  color: var(--ink);
+}
+
+.spend-readout strong.spend-over {
+  color: var(--red);
+}
+
 label {
   display: block;
   color: #575851;
@@ -872,6 +888,16 @@ textarea:focus {
   padding: 10px 12px;
   color: #9e4545;
   font-size: 11px;
+}
+
+.budget-banner {
+  border-left: 2px solid var(--red);
+  background: #fbefed;
+  padding: 10px 12px;
+  color: #9e4545;
+  font-size: 11px;
+  margin-bottom: 10px;
+  border-radius: 6px;
 }
 
 .trace-trigger {
@@ -1883,6 +1909,11 @@ textarea:focus {
 }
 
 [data-theme="dark"] .run-error {
+  background: #1e1010;
+  color: #d07070;
+}
+
+[data-theme="dark"] .budget-banner {
   background: #1e1010;
   color: #d07070;
 }

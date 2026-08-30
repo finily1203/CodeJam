@@ -97,7 +97,7 @@ describe("JsonStore", () => {
     await store.initialize();
 
     const migrated = store.snapshot();
-    expect(migrated.version).toBe(6);
+    expect(migrated.version).toBe(7);
     expect(migrated.runs[0]?.spans).toEqual([]);
     expect(migrated.runs[0]?.initiatedBy).toEqual({
       type: "human",
@@ -111,7 +111,7 @@ describe("JsonStore", () => {
     expect(migrated.agentVersions).toEqual([]);
 
     const onDisk = JSON.parse(await readFile(filePath, "utf8")) as Database;
-    expect(onDisk.version).toBe(6);
+    expect(onDisk.version).toBe(7);
     expect(onDisk.runs[0]?.spans).toEqual([]);
     expect(onDisk.runs[0]?.initiatedBy).toEqual({
       type: "human",
@@ -154,7 +154,7 @@ describe("JsonStore", () => {
     await store.initialize();
 
     const migrated = store.snapshot();
-    expect(migrated.version).toBe(6);
+    expect(migrated.version).toBe(7);
     expect(migrated.runs[0]?.initiatedBy).toEqual({
       type: "human",
       id: "unknown",
@@ -196,7 +196,7 @@ describe("JsonStore", () => {
     await store.initialize();
 
     const migrated = store.snapshot();
-    expect(migrated.version).toBe(6);
+    expect(migrated.version).toBe(7);
     expect(migrated.runs[0]?.sessionId).toBeNull();
     expect(migrated.runs[0]?.initiatedBy).toEqual({
       type: "human",
@@ -239,7 +239,7 @@ describe("JsonStore", () => {
     await store.initialize();
 
     const migrated = store.snapshot();
-    expect(migrated.version).toBe(6);
+    expect(migrated.version).toBe(7);
     expect(migrated.runs[0]?.environment).toBeNull();
     expect(migrated.runs[0]?.sessionId).toBe("thread-1");
     expect(migrated.runs[0]?.agentVersion).toBe(1);
@@ -291,10 +291,71 @@ describe("JsonStore", () => {
     await store.initialize();
 
     const migrated = store.snapshot();
-    expect(migrated.version).toBe(6);
+    expect(migrated.version).toBe(7);
     expect(migrated.agents[0]?.version).toBe(1);
     expect(migrated.runs[0]?.agentVersion).toBe(1);
     expect(migrated.agentVersions).toEqual([]);
+    expect(migrated.agents[0]?.totalSpendUsd).toBe(0);
+    expect(migrated.agents[0]?.budgetLimitUsd).toBeNull();
+    expect(migrated.runs[0]?.estimatedCostUsd).toBeNull();
+  });
+
+  it("migrates a version-6 database on disk by backfilling cost/budget fields", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "launchpad-store-test-"));
+    temporaryDirectories.push(root);
+    const filePath = path.join(root, "db.json");
+    const legacyDatabase = {
+      version: 6,
+      agents: [
+        {
+          id: "agent-1",
+          name: "Legacy Agent",
+          description: "",
+          instructions: "",
+          status: "ready",
+          workspacePath: "/tmp/agent-1",
+          codexThreadId: null,
+          lastError: null,
+          version: 1,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      messages: [],
+      runs: [
+        {
+          id: "run-1",
+          agentId: "agent-1",
+          status: "completed",
+          prompt: "hello",
+          output: "hi",
+          error: null,
+          usage: { inputTokens: 100, outputTokens: 20 },
+          spans: [],
+          initiatedBy: { type: "human", id: "user-1", name: "Someone" },
+          sessionId: "thread-1",
+          environment: null,
+          agentVersion: 1,
+          startedAt: "2026-01-01T00:00:00.000Z",
+          completedAt: "2026-01-01T00:00:01.000Z",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      agentVersions: [],
+    };
+    await writeFile(filePath, JSON.stringify(legacyDatabase), "utf8");
+
+    const store = new JsonStore(filePath);
+    await store.initialize();
+
+    const migrated = store.snapshot();
+    expect(migrated.version).toBe(7);
+    expect(migrated.agents[0]?.totalSpendUsd).toBe(0);
+    expect(migrated.agents[0]?.budgetLimitUsd).toBeNull();
+    // Cost is not retroactively computed from the usage this historical Run
+    // already has - it stays null, same "no honest historical value"
+    // reasoning as sessionId's migration.
+    expect(migrated.runs[0]?.estimatedCostUsd).toBeNull();
   });
 
   it("rejects a database file from an unsupported future version", async () => {

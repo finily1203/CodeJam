@@ -11,6 +11,8 @@ export interface Agent {
   codexThreadId: string | null;
   lastError: string | null;
   version: number;
+  totalSpendUsd: number;
+  budgetLimitUsd: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -64,6 +66,7 @@ export interface AgentRun {
     outputTokens?: number;
   } | null;
   environment: RunEnvironment | null;
+  estimatedCostUsd: number | null;
   agentVersion: number;
   initiatedBy: Actor;
   sessionId: string | null;
@@ -106,6 +109,7 @@ export interface RunTrace {
   sessionId: string | null;
   usage: RunUsage | null;
   environment: RunEnvironment | null;
+  estimatedCostUsd: number | null;
   agentVersion: number;
   spans: RunSpan[];
 }

@@ -44,6 +44,10 @@ const envSchema = z.object({
     .string()
     .url()
     .default("https://ark.cn-beijing.volces.com/api/v3"),
+  // Real per-model Ark pricing isn't published for every endpoint, so cost
+  // is a flat platform-wide estimate rather than a per-model invoice figure.
+  COST_PER_MILLION_INPUT_TOKENS_USD: z.coerce.number().min(0).default(0.5),
+  COST_PER_MILLION_OUTPUT_TOKENS_USD: z.coerce.number().min(0).default(1.5),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
 });
 
@@ -87,6 +91,8 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
     arkApiKey: env.ARK_API_KEY?.trim() ?? "",
     arkModel: env.ARK_MODEL?.trim() ?? "",
     arkBaseUrl: env.ARK_BASE_URL.replace(/\/+$/, ""),
+    costPerMillionInputTokensUsd: env.COST_PER_MILLION_INPUT_TOKENS_USD,
+    costPerMillionOutputTokensUsd: env.COST_PER_MILLION_OUTPUT_TOKENS_USD,
     nodeEnv: env.NODE_ENV,
   };
 }
