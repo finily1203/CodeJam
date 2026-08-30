@@ -1,5 +1,5 @@
 import { getActorId, getActorName } from "./actor";
-import type { Agent, AgentRun, Message, RunTrace, SystemInfo } from "./types";
+import type { Agent, AgentRun, AgentVersion, Message, RunTrace, SystemInfo } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -73,6 +73,8 @@ export const api = {
     request<{ messages: Message[] }>("/api/agents/" + id + "/messages"),
   runs: (id: string) =>
     request<{ runs: AgentRun[] }>("/api/agents/" + id + "/runs"),
+  versions: (id: string) =>
+    request<{ versions: AgentVersion[] }>("/api/agents/" + id + "/versions"),
   sendMessage: (id: string, content: string) =>
     request<{ run: AgentRun; message: Message }>(
       "/api/agents/" + id + "/messages",

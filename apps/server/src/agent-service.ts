@@ -9,6 +9,7 @@ import type {
   Agent,
   AgentRun,
   AgentRunner,
+  AgentVersion,
   CreateAgentInput,
   Message,
   RunEnvironment,
@@ -82,11 +83,25 @@ export class AgentService {
       workspacePath: this.workspaces.workspacePath(id),
       codexThreadId: null,
       lastError: null,
+      version: 1,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
+    const initialVersion: AgentVersion = {
+      id: randomUUID(),
+      agentId: id,
+      version: 1,
+      name: agent.name,
+      description: agent.description,
+      instructions: agent.instructions,
+      changedFields: [],
+      createdAt: timestamp,
+    };
     await this.workspaces.create(agent);
-    await this.store.mutate((database) => database.agents.push(agent));
+    await this.store.mutate((database) => {
+      database.agents.push(agent);
+      database.agentVersions.push(initialVersion);
+    });
     return agent;
   }
 
@@ -103,15 +118,45 @@ export class AgentService {
       if (agent.status === "busy") {
         throw new HttpError(409, "Stop the active run before editing this Agent");
       }
-      if (input.name !== undefined) agent.name = input.name.trim();
-      if (input.description !== undefined) agent.description = input.description.trim();
-      if (input.instructions !== undefined) agent.instructions = input.instructions.trim();
+      const changedFields: string[] = [];
+      const nextName = input.name !== undefined ? input.name.trim() : agent.name;
+      const nextDescription =
+        input.description !== undefined ? input.description.trim() : agent.description;
+      const nextInstructions =
+        input.instructions !== undefined ? input.instructions.trim() : agent.instructions;
+      if (nextName !== agent.name) changedFields.push("name");
+      if (nextDescription !== agent.description) changedFields.push("description");
+      if (nextInstructions !== agent.instructions) changedFields.push("instructions");
+      agent.name = nextName;
+      agent.description = nextDescription;
+      agent.instructions = nextInstructions;
       agent.lastError = null;
       agent.updatedAt = now();
+      if (changedFields.length > 0) {
+        agent.version += 1;
+        database.agentVersions.push({
+          id: randomUUID(),
+          agentId: agent.id,
+          version: agent.version,
+          name: agent.name,
+          description: agent.description,
+          instructions: agent.instructions,
+          changedFields,
+          createdAt: agent.updatedAt,
+        });
+      }
       return structuredClone(agent);
     });
     await this.workspaces.writeInstructions(updated);
     return updated;
+  }
+
+  getAgentVersions(agentId: string): AgentVersion[] {
+    this.getAgent(agentId);
+    return this.store
+      .snapshot()
+      .agentVersions.filter((item) => item.agentId === agentId)
+      .sort((left, right) => right.version - left.version);
   }
 
   async deleteAgent(id: string): Promise<{ archivedWorkspace: string }> {
@@ -122,6 +167,7 @@ export class AgentService {
       database.agents = database.agents.filter((item) => item.id !== id);
       database.messages = database.messages.filter((item) => item.agentId !== id);
       database.runs = database.runs.filter((item) => item.agentId !== id);
+      database.agentVersions = database.agentVersions.filter((item) => item.agentId !== id);
     });
     return { archivedWorkspace };
   }
@@ -162,6 +208,7 @@ export class AgentService {
       sessionId: run.sessionId,
       usage: run.usage,
       environment: run.environment,
+      agentVersion: run.agentVersion,
       spans: run.spans,
     };
   }
@@ -216,6 +263,11 @@ export class AgentService {
       usage: null,
       spans: [],
       environment: this.currentRunEnvironment(),
+      // Placeholder, overwritten below inside the mutate callback with the
+      // Agent's actual current version — the two must be read atomically
+      // together with the status checks, so there is no real value to put
+      // here yet.
+      agentVersion: 1,
       initiatedBy,
       // Filled in below, inside the mutate callback, from the Agent's
       // current Codex thread — null here means "resolved below or, if this
@@ -252,6 +304,7 @@ export class AgentService {
       // one already exists; a brand-new Agent has none yet, and this Run's
       // own result will establish it (see executeRun's success path).
       run.sessionId = storedAgent.codexThreadId;
+      run.agentVersion = storedAgent.version;
       database.runs.push(run);
       database.messages.push(message);
       const snapshot = structuredClone(storedAgent);
