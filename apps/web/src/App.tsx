@@ -80,11 +80,27 @@ function TracePanel({
   error: string | null;
   onClose: () => void;
 }) {
+  const [failuresOnly, setFailuresOnly] = useState(false);
+
+  const visibleSpans = trace
+    ? failuresOnly
+      ? trace.spans.filter((span) => span.status === "failed")
+      : trace.spans
+    : [];
+
   return (
     <section className="trace-panel">
       <div className="trace-panel-header">
         <span className="eyebrow">Middleware evidence</span>
         <h3>Run trace{trace ? " · " + trace.status : ""}</h3>
+        <label className="trace-filter">
+          <input
+            type="checkbox"
+            checked={failuresOnly}
+            onChange={(event) => setFailuresOnly(event.target.checked)}
+          />
+          Failures only
+        </label>
         <button className="trace-panel-close" onClick={onClose} aria-label="Close trace">
           ×
         </button>
@@ -97,12 +113,12 @@ function TracePanel({
       {error && <div className="error-banner" role="alert">{error}</div>}
       {trace && !loading && (
         <ol className="trace-span-list">
-          {trace.spans.length === 0 ? (
+          {visibleSpans.length === 0 ? (
             <li className="trace-empty">
               No spans recorded for this Run{trace.status === "failed" ? " — it failed before the Runtime reported any events." : "."}
             </li>
           ) : (
-            trace.spans.map((span) => <TraceSpanRow key={span.id} span={span} />)
+            visibleSpans.map((span) => <TraceSpanRow key={span.id} span={span} />)
           )}
         </ol>
       )}

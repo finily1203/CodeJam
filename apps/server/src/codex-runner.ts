@@ -2,6 +2,7 @@ import type { ChildProcess } from "node:child_process";
 import crossSpawn from "cross-spawn";
 import type { AppConfig } from "./config.js";
 import { RunCancelledError } from "./errors.js";
+import { redact } from "./redact.js";
 import type {
   AgentRunner,
   RunSpan,
@@ -21,7 +22,8 @@ export interface ParsedEvents {
 const MAX_SPAN_DETAIL_LENGTH = 2_000;
 
 function truncate(value: string, max = MAX_SPAN_DETAIL_LENGTH): string {
-  return value.length > max ? value.slice(0, max) + " …(truncated)" : value;
+  const safe = redact(value);
+  return safe.length > max ? safe.slice(0, max) + " …(truncated)" : safe;
 }
 
 function openModelCallSpan(spans: RunSpan[]): RunSpan | undefined {
