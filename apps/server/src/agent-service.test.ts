@@ -152,6 +152,43 @@ describe("Agent lifecycle", () => {
     expect(() => service.getAgentVersions(agent.id)).toThrow();
   });
 
+  it("includes a versionDiff in the trace showing what changed since the Run's previous version", async () => {
+    const service = await makeService();
+    const agent = await service.createAgent({ name: "Builder", instructions: "Be helpful" });
+    const first = await service.sendMessage(agent.id, "first");
+    await expect.poll(() => service.getRun(first.run.id).status).toBe("completed");
+
+    const firstTrace = service.getRunTrace(first.run.id);
+    expect(firstTrace.versionDiff).toMatchObject({
+      version: 1,
+      changedFields: [],
+      previousVersion: null,
+      previousSnapshot: null,
+      currentAgentVersion: 1,
+    });
+    expect(firstTrace.versionDiff?.snapshot).toMatchObject({ instructions: "Be helpful" });
+
+    await service.updateAgent(agent.id, { instructions: "Be terse" });
+    const second = await service.sendMessage(agent.id, "second");
+    await expect.poll(() => service.getRun(second.run.id).status).toBe("completed");
+
+    const secondTrace = service.getRunTrace(second.run.id);
+    expect(secondTrace.versionDiff).toMatchObject({
+      version: 2,
+      changedFields: ["instructions"],
+      previousVersion: 1,
+      currentAgentVersion: 2,
+    });
+    expect(secondTrace.versionDiff?.snapshot).toMatchObject({ instructions: "Be terse" });
+    expect(secondTrace.versionDiff?.previousSnapshot).toMatchObject({ instructions: "Be helpful" });
+
+    // The first Run's diff must not retroactively change once the Agent moves on.
+    expect(service.getRunTrace(first.run.id).versionDiff).toMatchObject({
+      version: 1,
+      currentAgentVersion: 2,
+    });
+  });
+
   it("starts an Agent with no budget limit and zero spend, accumulating cost as Runs complete", async () => {
     const service = await makeService();
     const agent = await service.createAgent({ name: "Spender" });
@@ -254,6 +291,14 @@ describe("Agent lifecycle", () => {
       environment: service.getRun(run.id).environment,
       estimatedCostUsd: service.getRun(run.id).estimatedCostUsd,
       agentVersion: service.getRun(run.id).agentVersion,
+      versionDiff: {
+        version: 1,
+        changedFields: [],
+        snapshot: { name: "Traced", description: "", instructions: "" },
+        previousVersion: null,
+        previousSnapshot: null,
+        currentAgentVersion: 1,
+      },
       spans: service.getRun(run.id).spans,
     });
     expect(trace.spans).toHaveLength(1);

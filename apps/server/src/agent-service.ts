@@ -17,6 +17,8 @@ import type {
   RunEnvironment,
   RunSpan,
   RunTrace,
+  RunVersionDiff,
+  RunVersionSnapshot,
   UpdateAgentInput,
 } from "./types.js";
 import { WorkspaceManager } from "./workspace.js";
@@ -221,7 +223,30 @@ export class AgentService {
       environment: run.environment,
       estimatedCostUsd: run.estimatedCostUsd,
       agentVersion: run.agentVersion,
+      versionDiff: this.buildVersionDiff(run.agentId, run.agentVersion),
       spans: run.spans,
+    };
+  }
+
+  private buildVersionDiff(agentId: string, runVersion: number): RunVersionDiff | null {
+    const database = this.store.snapshot();
+    const agent = database.agents.find((item) => item.id === agentId);
+    if (!agent) return null;
+    const versions = database.agentVersions.filter((item) => item.agentId === agentId);
+    const current = versions.find((item) => item.version === runVersion) ?? null;
+    const previous = versions.find((item) => item.version === runVersion - 1) ?? null;
+    const toSnapshot = (version: AgentVersion): RunVersionSnapshot => ({
+      name: version.name,
+      description: version.description,
+      instructions: version.instructions,
+    });
+    return {
+      version: runVersion,
+      changedFields: current?.changedFields ?? [],
+      snapshot: current ? toSnapshot(current) : null,
+      previousVersion: previous ? previous.version : null,
+      previousSnapshot: previous ? toSnapshot(previous) : null,
+      currentAgentVersion: agent.version,
     };
   }
 

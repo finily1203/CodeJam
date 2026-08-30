@@ -1144,6 +1144,107 @@ textarea:focus {
   color: var(--muted);
 }
 
+.version-diff-banner {
+  margin: 0 14px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--purple-soft);
+  overflow: hidden;
+}
+
+.version-diff-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  border: none;
+  background: none;
+  padding: 7px 10px;
+  font-size: 10px;
+  color: var(--purple-dark);
+  cursor: pointer;
+  text-align: left;
+}
+
+.version-diff-toggle:disabled {
+  cursor: default;
+}
+
+.version-diff-summary-text {
+  font-weight: 600;
+}
+
+.version-diff-caret {
+  flex-shrink: 0;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.version-diff-columns {
+  display: grid;
+  gap: 8px;
+  padding: 0 10px 10px;
+}
+
+.version-diff-field {
+  display: grid;
+  gap: 4px;
+}
+
+.version-diff-field-label {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.version-diff-sides {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.version-diff-side {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.version-diff-side-label {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.version-diff-old,
+.version-diff-new {
+  margin: 0;
+  padding: 7px 9px;
+  border-radius: 7px;
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 140px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+}
+
+.version-diff-old {
+  background: var(--paper);
+  color: var(--muted);
+  text-decoration: line-through;
+  text-decoration-color: rgba(217, 84, 84, 0.5);
+}
+
+.version-diff-new {
+  background: var(--paper);
+  color: var(--ink);
+  border-color: var(--purple);
+}
+
 .runs-panel {
   max-width: 1180px;
   margin: 0 auto 16px;
