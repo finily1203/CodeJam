@@ -45,6 +45,18 @@ const spanCategoryLabels: Record<RunSpan["category"], string> = {
   warning: "Warning",
 };
 
+function formatTokenCount(n: number): string {
+  return n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, "") + "k" : String(n);
+}
+
+function formatUsage(usage: RunTrace["usage"]): string {
+  if (!usage) return "";
+  const parts: string[] = [];
+  if (usage.inputTokens != null) parts.push(formatTokenCount(usage.inputTokens) + " in");
+  if (usage.outputTokens != null) parts.push(formatTokenCount(usage.outputTokens) + " out");
+  return parts.join(" · ");
+}
+
 function spanDuration(span: RunSpan): string {
   if (!span.endedAt) return "…";
   const ms = new Date(span.endedAt).getTime() - new Date(span.startedAt).getTime();
@@ -177,6 +189,7 @@ function TracePanel({
   const tree = useMemo(() => (trace ? buildSpanTree(trace.spans) : []), [trace]);
   const visibleTree = failuresOnly ? pruneToFailures(tree) : tree;
   const firstFailure = trace?.spans.find((span) => span.status === "failed") ?? null;
+  const usageLabel = trace ? formatUsage(trace.usage) : "";
 
   const jumpToFailure = () => {
     if (!firstFailure) return;
@@ -218,6 +231,12 @@ function TracePanel({
                 <span className="trace-meta-icon">#</span>
                 {trace.sessionId ? trace.sessionId.slice(0, 8) : "new"}
               </span>
+              {usageLabel && (
+                <span className="trace-meta-tag" title="Token usage for this Run">
+                  <span className="trace-meta-icon">tok</span>
+                  {usageLabel}
+                </span>
+              )}
             </div>
             <div className="trace-panel-actions">
               <button

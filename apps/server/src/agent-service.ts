@@ -159,6 +159,7 @@ export class AgentService {
       status: run.status,
       initiatedBy: run.initiatedBy,
       sessionId: run.sessionId,
+      usage: run.usage,
       spans: run.spans,
     };
   }

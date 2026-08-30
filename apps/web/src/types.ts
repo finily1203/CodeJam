@@ -71,12 +71,19 @@ export interface RunSpan {
   detail: string | null;
 }
 
+export interface RunUsage {
+  inputTokens?: number;
+  cachedInputTokens?: number;
+  outputTokens?: number;
+}
+
 export interface RunTrace {
   runId: string;
   agentId: string;
   status: RunStatus;
   initiatedBy: Actor;
   sessionId: string | null;
+  usage: RunUsage | null;
   spans: RunSpan[];
 }
 
