@@ -611,6 +611,39 @@ textarea:focus {
   font-size: 16px;
 }
 
+.playground-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.actor-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9px;
+  color: #777870;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.actor-field input {
+  font-size: 11px;
+  text-transform: none;
+  letter-spacing: normal;
+  border: 1px solid #e0ded6;
+  border-radius: 999px;
+  padding: 5px 10px;
+  width: 130px;
+  background: #fff;
+  color: #2c2b27;
+}
+
+.actor-field input:focus {
+  outline: 2px solid rgba(84, 137, 185, 0.3);
+  outline-offset: 1px;
+}
+
 .session-info {
   color: #777870;
   font-size: 9px;
@@ -860,6 +893,38 @@ textarea:focus {
   font-size: 12px;
 }
 
+.trace-initiator {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.trace-session {
+  font-size: 10px;
+  color: var(--muted);
+  cursor: default;
+}
+
+.trace-jump-button {
+  border: 1px solid var(--line);
+  background: none;
+  color: var(--purple);
+  font-size: 9px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+
+.trace-jump-button:hover:not(:disabled) {
+  background: var(--purple-soft);
+}
+
+.trace-jump-button:disabled {
+  color: var(--muted);
+  cursor: default;
+  opacity: 0.5;
+}
+
 .trace-panel-close {
   margin-left: auto;
   border: none;
@@ -895,10 +960,20 @@ textarea:focus {
 
 .trace-span {
   border-radius: 8px;
+  transition: background-color 0.4s ease;
 }
 
-.trace-span + .trace-span {
+/* .trace-span-branch wraps each node (its own row, then any child branches
+   rendered as its siblings via TraceSpanTree's recursion) — spacing between
+   both same-level branches and a parent row's first child branch. */
+.trace-span-branch + .trace-span-branch,
+.trace-span + .trace-span-branch {
   margin-top: 2px;
+}
+
+.trace-span-highlighted {
+  background: rgba(230, 168, 74, 0.22);
+  border-radius: 8px;
 }
 
 .trace-span-row {
@@ -948,6 +1023,16 @@ textarea:focus {
 .trace-category-reasoning {
   background: #eeeeea;
   color: var(--muted);
+}
+
+.trace-category-policy_decision {
+  background: #fdf0dc;
+  color: #a3641b;
+}
+
+.trace-category-warning {
+  background: #fdf6dc;
+  color: #8a7a1b;
 }
 
 .trace-span-label {

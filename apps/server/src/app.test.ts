@@ -149,4 +149,77 @@ describe("HTTP boundary", () => {
 
     await app.close();
   });
+
+  it("attributes a Run to the actor identified via request headers, falling back to anonymous when absent", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "launchpad-app-actor-test-"));
+    temporaryDirectories.push(root);
+    const config = loadConfig({
+      NODE_ENV: "test",
+      APP_DATA_DIR: path.join(root, "data"),
+      AGENT_WORKSPACE_ROOT: path.join(root, "workspaces"),
+      CODEX_HOME: path.join(root, "codex"),
+      ARK_API_KEY: "test-key",
+      ARK_MODEL: "ep-test",
+    });
+    const realService = new AgentService(
+      config,
+      new JsonStore(path.join(root, "data", "db.json")),
+      new WorkspaceManager(path.join(root, "workspaces")),
+      new FakeTracingRunner(),
+    );
+    await realService.initialize();
+    const app = await createApp(config, realService);
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/agents",
+      payload: { name: "Attributed" },
+    });
+    const { agent } = created.json() as { agent: { id: string } };
+
+    const named = await app.inject({
+      method: "POST",
+      url: "/api/agents/" + agent.id + "/messages",
+      headers: { "x-actor-id": "user-42", "x-actor-name": "Jing Rui" },
+      payload: { content: "hi" },
+    });
+    const { run: namedRun } = named.json() as { run: { id: string } };
+    expect(namedRun).toMatchObject({
+      initiatedBy: { type: "human", id: "user-42", name: "Jing Rui" },
+    });
+
+    const traceResponse = await app.inject({
+      method: "GET",
+      url: "/api/runs/" + namedRun.id + "/trace",
+    });
+    expect(traceResponse.json()).toMatchObject({
+      initiatedBy: { type: "human", id: "user-42", name: "Jing Rui" },
+    });
+
+    await expect
+      .poll(async () => {
+        const response = await app.inject({ method: "GET", url: "/api/runs/" + namedRun.id });
+        return (response.json() as { run: { status: string } }).run.status;
+      })
+      .toBe("completed");
+
+    const anonymous = await app.inject({
+      method: "POST",
+      url: "/api/agents/" + agent.id + "/messages",
+      payload: { content: "hi again" },
+    });
+    const { run: anonymousRun } = anonymous.json() as { run: { id: string } };
+    expect(anonymousRun).toMatchObject({
+      initiatedBy: { type: "human", id: "anonymous", name: "Anonymous operator" },
+    });
+
+    await expect
+      .poll(async () => {
+        const response = await app.inject({ method: "GET", url: "/api/runs/" + anonymousRun.id });
+        return (response.json() as { run: { status: string } }).run.status;
+      })
+      .toBe("completed");
+
+    await app.close();
+  });
 });

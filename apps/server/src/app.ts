@@ -1,12 +1,13 @@
 import cors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
-import Fastify, { type FastifyInstance } from "fastify";
-import { timingSafeEqual } from "node:crypto";
+import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import type { AppConfig } from "./config.js";
 import { HttpError } from "./errors.js";
 import type { AgentService } from "./agent-service.js";
+import type { Actor } from "./types.js";
 
 const agentIdParams = z.object({ id: z.string().uuid() });
 const runIdParams = z.object({ id: z.string().uuid() });
@@ -22,6 +23,27 @@ const updateAgentBody = createAgentBody.partial().refine(
 const messageBody = z.object({
   content: z.string().trim().min(1).max(50_000),
 });
+
+/**
+ * The platform has no real user accounts, so the browser self-reports who is
+ * acting via `X-Actor-Id`/`X-Actor-Name` (see apps/web/src/actor.ts). This is
+ * an unverified mock identity, not authentication — anyone can send any
+ * value. It exists to attribute a Run to a principal in the trace, not to
+ * gate access. Absent headers (a raw API call, a script) fall through to
+ * AgentService's own anonymous default.
+ */
+function actorFromHeaders(request: FastifyRequest): Actor | undefined {
+  const rawId = request.headers["x-actor-id"];
+  const rawName = request.headers["x-actor-name"];
+  const id = typeof rawId === "string" ? rawId.trim() : "";
+  const name = typeof rawName === "string" ? rawName.trim().slice(0, 80) : "";
+  if (!id && !name) return undefined;
+  return {
+    type: "human",
+    id: id || randomUUID(),
+    name: name || "Unnamed operator",
+  };
+}
 
 export async function createApp(
   config: AppConfig,
@@ -119,7 +141,7 @@ export async function createApp(
   app.post("/api/agents/:id/messages", async (request, reply) => {
     const { id } = agentIdParams.parse(request.params);
     const body = messageBody.parse(request.body);
-    const result = await service.sendMessage(id, body.content);
+    const result = await service.sendMessage(id, body.content, actorFromHeaders(request));
     return reply.code(202).send(result);
   });
 

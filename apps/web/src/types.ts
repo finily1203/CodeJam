@@ -23,6 +23,14 @@ export interface Message {
   createdAt: string;
 }
 
+/** A minimal mock identity: who caused a Run to happen. Self-reported by the
+ * browser (see actor.ts), not verified — there is no real auth on this POC. */
+export interface Actor {
+  type: "human" | "agent";
+  id: string;
+  name: string;
+}
+
 export interface AgentRun {
   id: string;
   agentId: string;
@@ -35,10 +43,18 @@ export interface AgentRun {
     cachedInputTokens?: number;
     outputTokens?: number;
   } | null;
+  initiatedBy: Actor;
+  sessionId: string | null;
   createdAt: string;
 }
 
-export type SpanCategory = "model_call" | "tool_call" | "reasoning" | "error";
+export type SpanCategory =
+  | "model_call"
+  | "tool_call"
+  | "reasoning"
+  | "error"
+  | "policy_decision"
+  | "warning";
 export type SpanStatus = "running" | "completed" | "failed";
 
 export interface RunSpan {
@@ -56,6 +72,8 @@ export interface RunTrace {
   runId: string;
   agentId: string;
   status: RunStatus;
+  initiatedBy: Actor;
+  sessionId: string | null;
   spans: RunSpan[];
 }
 
