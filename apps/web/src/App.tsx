@@ -140,6 +140,7 @@ function TraceSpanRow({
       className={
         "trace-span trace-span-" +
         span.status +
+        (depth > 0 ? " trace-span-nested" : "") +
         (highlighted ? " trace-span-highlighted" : "")
       }
       style={{ marginLeft: depth * 18 }}
@@ -247,12 +248,10 @@ function TracePanel({
                 <span className="trace-meta-icon">#</span>
                 {trace.sessionId ? trace.sessionId.slice(0, 8) : "new"}
               </span>
-              {usageLabel && (
-                <span className="trace-meta-tag" title="Token usage for this Run">
-                  <span className="trace-meta-icon">tok</span>
-                  {usageLabel}
-                </span>
-              )}
+              <span className="trace-meta-tag" title="Agent configuration version used for this Run">
+                <span className="trace-meta-icon">version</span>
+                {trace.agentVersion}
+              </span>
               {trace.environment && (
                 <span
                   className="trace-meta-tag"
@@ -270,15 +269,18 @@ function TracePanel({
                   {trace.environment.arkModel || "unset"}
                 </span>
               )}
-              <span className="trace-meta-tag" title="Agent configuration version used for this Run">
-                <span className="trace-meta-icon">v</span>
-                {trace.agentVersion}
-              </span>
+              {usageLabel && (
+                <span className="trace-meta-tag" title="Token usage for this Run">
+                  <span className="trace-meta-icon">token</span>
+                  {usageLabel}
+                </span>
+              )}
               {trace.estimatedCostUsd != null && (
                 <span
                   className="trace-meta-tag"
                   title="Estimated cost of this Run (not an invoice)"
                 >
+                  <span className="trace-meta-icon">cost</span>
                   {formatUsd(trace.estimatedCostUsd)}
                 </span>
               )}
