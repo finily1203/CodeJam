@@ -186,6 +186,39 @@ describe("Agent lifecycle", () => {
     expect(service.getAgent(agent.id).budgetLimitUsd).toBeNull();
   });
 
+  it("flags a Run as a cost anomaly against the Agent's own history, but not before there is enough history", async () => {
+    let call = 0;
+    const runner: AgentRunner = {
+      run: async () => {
+        call += 1;
+        const usage =
+          call <= 3
+            ? { inputTokens: 100, outputTokens: 20 }
+            : { inputTokens: 100_000, outputTokens: 20_000 };
+        return { output: "done " + call, threadId: "thread", usage, spans: [] };
+      },
+      cancel: async () => false,
+      isAvailable: async () => true,
+    };
+    const service = await makeService(runner);
+    const agent = await service.createAgent({ name: "Watched" });
+
+    for (let i = 0; i < 3; i++) {
+      const { run } = await service.sendMessage(agent.id, "normal " + i);
+      await expect.poll(() => service.getRun(run.id).status).toBe("completed");
+      // Not enough history yet for the first three Runs to be judged.
+      expect(service.getRunTrace(run.id).spans.some((span) => span.id.startsWith("anomaly-")))
+        .toBe(false);
+    }
+
+    const { run: outlier } = await service.sendMessage(agent.id, "the big one");
+    await expect.poll(() => service.getRun(outlier.id).status).toBe("completed");
+    const trace = service.getRunTrace(outlier.id);
+    const anomaly = trace.spans.find((span) => span.id === "anomaly-cost");
+    expect(anomaly).toMatchObject({ category: "warning", status: "completed" });
+    expect(anomaly?.detail).toContain("over 3x");
+  });
+
   it("persists a playground conversation", async () => {
     const service = await makeService();
     const agent = await service.createAgent({ name: "Coder" });
