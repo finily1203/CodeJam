@@ -7,7 +7,7 @@ import { loadConfig } from "./config.js";
 import { AgentService } from "./agent-service.js";
 import { JsonStore } from "./store.js";
 import { WorkspaceManager } from "./workspace.js";
-import type { AgentRunner, RunnerRequest, RunnerResult } from "./types.js";
+import type { AgentRunner, ExplainTraceInput, RunnerRequest, RunnerResult, TraceExplainer } from "./types.js";
 
 const service = {
   listAgents: () => [],
@@ -39,6 +39,12 @@ class FakeTracingRunner implements AgentRunner {
   }
   async isAvailable(): Promise<boolean> {
     return true;
+  }
+}
+
+class FakeExplainer implements TraceExplainer {
+  async explain(input: ExplainTraceInput): Promise<string> {
+    return "Fake explanation for " + input.agentName;
   }
 }
 
@@ -106,6 +112,7 @@ describe("HTTP boundary", () => {
       new JsonStore(path.join(root, "data", "db.json")),
       new WorkspaceManager(path.join(root, "workspaces")),
       new FakeTracingRunner(),
+      new FakeExplainer(),
     );
     await realService.initialize();
     const app = await createApp(config, realService);
@@ -167,6 +174,7 @@ describe("HTTP boundary", () => {
       new JsonStore(path.join(root, "data", "db.json")),
       new WorkspaceManager(path.join(root, "workspaces")),
       new FakeTracingRunner(),
+      new FakeExplainer(),
     );
     await realService.initialize();
     const app = await createApp(config, realService);

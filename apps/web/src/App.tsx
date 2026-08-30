@@ -251,15 +251,67 @@ function VersionDiffBanner({ trace }: { trace: RunTrace }) {
   );
 }
 
+function ExplainTraceBox({
+  trace,
+  onExplain,
+}: {
+  trace: RunTrace;
+  onExplain: (runId: string) => Promise<void>;
+}) {
+  const [explaining, setExplaining] = useState(false);
+  const [explainError, setExplainError] = useState<string | null>(null);
+  const inProgress = trace.status === "queued" || trace.status === "running";
+
+  if (trace.explanation) {
+    return (
+      <div className="explain-trace-box explain-trace-box-filled">
+        <span className="explain-trace-icon">✨</span>
+        <p>{trace.explanation}</p>
+      </div>
+    );
+  }
+
+  if (inProgress) return null;
+
+  const runExplain = async () => {
+    setExplaining(true);
+    setExplainError(null);
+    try {
+      await onExplain(trace.runId);
+    } catch (reason) {
+      setExplainError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setExplaining(false);
+    }
+  };
+
+  return (
+    <div className="explain-trace-box">
+      <button className="explain-trace-button" onClick={runExplain} disabled={explaining}>
+        {explaining ? (
+          <>
+            <Spinner /> Explaining…
+          </>
+        ) : (
+          <>✨ Explain this trace</>
+        )}
+      </button>
+      {explainError && <span className="explain-trace-error">{explainError}</span>}
+    </div>
+  );
+}
+
 function TracePanel({
   trace,
   loading,
   error,
+  onExplain,
   onClose,
 }: {
   trace: RunTrace | null;
   loading: boolean;
   error: string | null;
+  onExplain: (runId: string) => Promise<void>;
   onClose: () => void;
 }) {
   const [failuresOnly, setFailuresOnly] = useState(false);
@@ -372,6 +424,7 @@ function TracePanel({
           </div>
         )}
       </div>
+      {trace && <ExplainTraceBox trace={trace} onExplain={onExplain} />}
       {trace && <VersionDiffBanner trace={trace} />}
       {loading && (
         <div className="trace-panel-loading">
@@ -863,6 +916,15 @@ export default function App() {
     }
   };
 
+  const explainTrace = async (runId: string) => {
+    const result = await api.explainRun(runId);
+    setTrace((current) =>
+      current && current.runId === runId
+        ? { ...current, explanation: result.run.explanation }
+        : current,
+    );
+  };
+
   const sendMessage = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!selected || !prompt.trim()) return;
@@ -1299,6 +1361,7 @@ export default function App() {
                   trace={trace}
                   loading={traceLoading}
                   error={traceError}
+                  onExplain={explainTrace}
                   onClose={() => {
                     setTraceRunId(null);
                     setTrace(null);

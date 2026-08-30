@@ -68,6 +68,7 @@ export interface AgentRun {
   environment: RunEnvironment | null;
   estimatedCostUsd: number | null;
   agentVersion: number;
+  explanation: string | null;
   initiatedBy: Actor;
   sessionId: string | null;
   startedAt: string | null;
@@ -127,6 +128,7 @@ export interface RunTrace {
   estimatedCostUsd: number | null;
   agentVersion: number;
   versionDiff: RunVersionDiff | null;
+  explanation: string | null;
   spans: RunSpan[];
 }
 

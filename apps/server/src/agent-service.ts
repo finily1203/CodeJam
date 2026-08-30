@@ -19,6 +19,7 @@ import type {
   RunTrace,
   RunVersionDiff,
   RunVersionSnapshot,
+  TraceExplainer,
   UpdateAgentInput,
 } from "./types.js";
 import { WorkspaceManager } from "./workspace.js";
@@ -39,6 +40,7 @@ export class AgentService {
     private readonly store: JsonStore,
     private readonly workspaces: WorkspaceManager,
     private readonly runner: AgentRunner,
+    private readonly explainer: TraceExplainer,
   ) {}
 
   async initialize(): Promise<void> {
@@ -224,8 +226,50 @@ export class AgentService {
       estimatedCostUsd: run.estimatedCostUsd,
       agentVersion: run.agentVersion,
       versionDiff: this.buildVersionDiff(run.agentId, run.agentVersion),
+      explanation: run.explanation,
       spans: run.spans,
     };
+  }
+
+  async explainRun(runId: string): Promise<AgentRun> {
+    const run = this.getRun(runId);
+    if (run.explanation) return run;
+    if (run.status === "queued" || run.status === "running") {
+      throw new HttpError(409, "Run is still in progress");
+    }
+    if (!isArkConfigured(this.config)) {
+      throw new HttpError(
+        503,
+        "Ark is not configured. Set ARK_API_KEY and ARK_MODEL, then restart.",
+      );
+    }
+    const agent = this.store.snapshot().agents.find((item) => item.id === run.agentId);
+    const durationMs =
+      run.startedAt && run.completedAt
+        ? new Date(run.completedAt).getTime() - new Date(run.startedAt).getTime()
+        : null;
+    const explanation = await this.explainer.explain({
+      agentName: agent?.name ?? "Unknown Agent",
+      status: run.status,
+      prompt: run.prompt,
+      output: run.output,
+      error: run.error,
+      usage: run.usage,
+      estimatedCostUsd: run.estimatedCostUsd,
+      durationMs,
+      spans: run.spans,
+    });
+    return this.store.mutate((database) => {
+      const stored = database.runs.find((item) => item.id === runId);
+      if (!stored) {
+        throw new HttpError(404, "Run not found");
+      }
+      // Another request may have generated (and cached) an explanation
+      // while this Ark call was in flight - keep whichever landed first
+      // rather than overwriting it.
+      stored.explanation ??= explanation;
+      return structuredClone(stored);
+    });
   }
 
   private buildVersionDiff(agentId: string, runVersion: number): RunVersionDiff | null {
@@ -314,6 +358,7 @@ export class AgentService {
       // together with the status checks, so there is no real value to put
       // here yet.
       agentVersion: 1,
+      explanation: null,
       initiatedBy,
       // Filled in below, inside the mutate callback, from the Agent's
       // current Codex thread — null here means "resolved below or, if this

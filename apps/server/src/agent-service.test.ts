@@ -6,7 +6,13 @@ import { AgentService } from "./agent-service.js";
 import { loadConfig } from "./config.js";
 import { PolicyViolationError, RunCancelledError } from "./errors.js";
 import { JsonStore } from "./store.js";
-import type { AgentRunner, RunnerRequest, RunnerResult } from "./types.js";
+import type {
+  AgentRunner,
+  ExplainTraceInput,
+  RunnerRequest,
+  RunnerResult,
+  TraceExplainer,
+} from "./types.js";
 import { WorkspaceManager } from "./workspace.js";
 
 class FakeRunner implements AgentRunner {
@@ -37,6 +43,14 @@ class FakeRunner implements AgentRunner {
   }
 }
 
+class FakeExplainer implements TraceExplainer {
+  calls: ExplainTraceInput[] = [];
+  async explain(input: ExplainTraceInput): Promise<string> {
+    this.calls.push(input);
+    return "Explanation #" + this.calls.length + " for " + input.agentName;
+  }
+}
+
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
@@ -48,7 +62,10 @@ afterEach(async () => {
   );
 });
 
-async function makeService(runner: AgentRunner = new FakeRunner()): Promise<AgentService> {
+async function makeService(
+  runner: AgentRunner = new FakeRunner(),
+  explainer: TraceExplainer = new FakeExplainer(),
+): Promise<AgentService> {
   const root = await mkdtemp(path.join(tmpdir(), "launchpad-test-"));
   temporaryDirectories.push(root);
   const config = loadConfig({
@@ -64,6 +81,7 @@ async function makeService(runner: AgentRunner = new FakeRunner()): Promise<Agen
     new JsonStore(path.join(root, "data", "db.json")),
     new WorkspaceManager(path.join(root, "workspaces")),
     runner,
+    explainer,
   );
   await service.initialize();
   return service;
@@ -299,6 +317,7 @@ describe("Agent lifecycle", () => {
         previousSnapshot: null,
         currentAgentVersion: 1,
       },
+      explanation: null,
       spans: service.getRun(run.id).spans,
     });
     expect(trace.spans).toHaveLength(1);
@@ -311,6 +330,44 @@ describe("Agent lifecycle", () => {
       runtimeProvider: "local-process",
       containerEngine: null,
     });
+  });
+
+  it("generates a plain-English explanation on demand and caches it on the Run", async () => {
+    const explainer = new FakeExplainer();
+    const service = await makeService(new FakeRunner(), explainer);
+    const agent = await service.createAgent({ name: "Explained" });
+    const { run } = await service.sendMessage(agent.id, "explain me");
+    await expect.poll(() => service.getRun(run.id).status).toBe("completed");
+    expect(service.getRun(run.id).explanation).toBeNull();
+    expect(service.getRunTrace(run.id).explanation).toBeNull();
+
+    const explained = await service.explainRun(run.id);
+    expect(explained.explanation).toBe("Explanation #1 for Explained");
+    expect(explainer.calls).toHaveLength(1);
+    expect(explainer.calls[0]).toMatchObject({
+      agentName: "Explained",
+      status: "completed",
+      prompt: "explain me",
+    });
+
+    // Cached: a second call must not invoke the explainer again.
+    const again = await service.explainRun(run.id);
+    expect(again.explanation).toBe("Explanation #1 for Explained");
+    expect(explainer.calls).toHaveLength(1);
+    expect(service.getRunTrace(run.id).explanation).toBe("Explanation #1 for Explained");
+  });
+
+  it("rejects explaining a Run that is still in progress", async () => {
+    const runner: AgentRunner = {
+      run: () => new Promise(() => {}),
+      cancel: async () => false,
+      isAvailable: async () => true,
+    };
+    const service = await makeService(runner);
+    const agent = await service.createAgent({ name: "Slow" });
+    const { run } = await service.sendMessage(agent.id, "hang forever");
+    await expect.poll(() => service.getRun(run.id).status).toBe("running");
+    await expect(service.explainRun(run.id)).rejects.toThrow("Run is still in progress");
   });
 
   it("establishes a session on the first successful Run and reuses it on the next one", async () => {

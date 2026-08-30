@@ -1144,6 +1144,63 @@ textarea:focus {
   color: var(--muted);
 }
 
+.explain-trace-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 14px 10px;
+  padding: 9px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+}
+
+.explain-trace-box-filled {
+  align-items: flex-start;
+  border: 1px solid var(--purple);
+  background: var(--purple-soft);
+}
+
+.explain-trace-box-filled p {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--ink);
+}
+
+.explain-trace-icon {
+  flex-shrink: 0;
+  font-size: 13px;
+}
+
+.explain-trace-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--purple);
+  background: none;
+  color: var(--purple-dark);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 6px 12px;
+  border-radius: 999px;
+  transition: 150ms ease;
+}
+
+.explain-trace-button:hover:not(:disabled) {
+  background: var(--purple-soft);
+}
+
+.explain-trace-button:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.explain-trace-error {
+  font-size: 10px;
+  color: #a13f3f;
+}
+
 .version-diff-banner {
   margin: 0 14px 10px;
   border: 1px solid var(--line);
@@ -1997,6 +2054,10 @@ textarea:focus {
 [data-theme="dark"] .error-banner {
   background: #201010;
   border-color: #4a1e1e;
+  color: #e07575;
+}
+
+[data-theme="dark"] .explain-trace-error {
   color: #e07575;
 }
 
