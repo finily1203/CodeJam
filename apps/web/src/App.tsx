@@ -237,6 +237,23 @@ function TracePanel({
                   {usageLabel}
                 </span>
               )}
+              {trace.environment && (
+                <span
+                  className="trace-meta-tag"
+                  title={
+                    "Sandbox: " +
+                    trace.environment.codexSandboxMode +
+                    " · Runtime: " +
+                    trace.environment.runtimeProvider +
+                    (trace.environment.containerEngine
+                      ? " (" + trace.environment.containerEngine + ")"
+                      : "")
+                  }
+                >
+                  <span className="trace-meta-icon">model</span>
+                  {trace.environment.arkModel || "unset"}
+                </span>
+              )}
             </div>
             <div className="trace-panel-actions">
               <button

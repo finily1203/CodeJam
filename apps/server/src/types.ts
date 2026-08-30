@@ -42,6 +42,19 @@ export interface Actor {
   name: string;
 }
 
+/**
+ * A snapshot of the Runtime configuration active when a Run started —
+ * captured on the Run itself rather than read live from current config, so
+ * a trace still tells the truth about what actually executed after the
+ * platform's config changes (a different model, a different sandbox mode).
+ */
+export interface RunEnvironment {
+  arkModel: string;
+  codexSandboxMode: string;
+  runtimeProvider: "local-process" | "container";
+  containerEngine: string | null;
+}
+
 export interface AgentRun {
   id: string;
   agentId: string;
@@ -52,6 +65,8 @@ export interface AgentRun {
   error: string | null;
   usage: RunUsage | null;
   spans: RunSpan[];
+  /** Null only for a Run persisted before this field existed. */
+  environment: RunEnvironment | null;
   initiatedBy: Actor;
   /**
    * The Codex thread this Run participated in — Codex's own session
@@ -65,7 +80,7 @@ export interface AgentRun {
   createdAt: string;
 }
 
-export const DATABASE_VERSION = 4;
+export const DATABASE_VERSION = 5;
 
 export interface Database {
   version: typeof DATABASE_VERSION;
@@ -113,6 +128,7 @@ export interface RunTrace {
   initiatedBy: Actor;
   sessionId: string | null;
   usage: RunUsage | null;
+  environment: RunEnvironment | null;
   spans: RunSpan[];
 }
 

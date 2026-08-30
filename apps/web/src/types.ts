@@ -31,6 +31,13 @@ export interface Actor {
   name: string;
 }
 
+export interface RunEnvironment {
+  arkModel: string;
+  codexSandboxMode: string;
+  runtimeProvider: "local-process" | "container";
+  containerEngine: string | null;
+}
+
 export interface AgentRun {
   id: string;
   agentId: string;
@@ -44,6 +51,7 @@ export interface AgentRun {
     cachedInputTokens?: number;
     outputTokens?: number;
   } | null;
+  environment: RunEnvironment | null;
   initiatedBy: Actor;
   sessionId: string | null;
   startedAt: string | null;
@@ -84,6 +92,7 @@ export interface RunTrace {
   initiatedBy: Actor;
   sessionId: string | null;
   usage: RunUsage | null;
+  environment: RunEnvironment | null;
   spans: RunSpan[];
 }
 

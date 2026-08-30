@@ -138,6 +138,7 @@ describe("HTTP boundary", () => {
     expect(traceResponse.statusCode).toBe(200);
     const trace = traceResponse.json();
     expect(trace).toMatchObject({ runId: run.id, agentId: agent.id, status: "completed" });
+    expect(trace.environment).toMatchObject({ arkModel: "ep-test" });
     expect(trace.spans).toHaveLength(1);
     expect(trace.spans[0]).toMatchObject({ category: "model_call", status: "completed" });
 
