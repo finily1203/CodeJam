@@ -190,35 +190,59 @@ function TracePanel({
   return (
     <section className="trace-panel">
       <div className="trace-panel-header">
-        <span className="eyebrow">Middleware evidence</span>
-        <h3>Run trace{trace ? " · " + trace.status : ""}</h3>
+        <div className="trace-panel-title-row">
+          <div className="trace-panel-title">
+            <span className="eyebrow">Middleware evidence</span>
+            <div className="trace-title-line">
+              <h3>Run trace</h3>
+              {trace && (
+                <span className={"trace-status-chip trace-status-chip-" + trace.status}>
+                  <span className="trace-status-dot" />
+                  {trace.status}
+                </span>
+              )}
+            </div>
+          </div>
+          <button className="trace-panel-close" onClick={onClose} aria-label="Close trace">
+            ×
+          </button>
+        </div>
         {trace && (
-          <span className="trace-initiator">Initiated by {trace.initiatedBy.name}</span>
+          <div className="trace-panel-toolbar">
+            <div className="trace-meta-tags">
+              <span className="trace-meta-tag">
+                <span className="trace-meta-icon">by</span>
+                {trace.initiatedBy.name}
+              </span>
+              <span className="trace-meta-tag" title={trace.sessionId ?? undefined}>
+                <span className="trace-meta-icon">#</span>
+                {trace.sessionId ? trace.sessionId.slice(0, 8) : "new"}
+              </span>
+            </div>
+            <div className="trace-panel-actions">
+              <button
+                className="trace-jump-button"
+                onClick={jumpToFailure}
+                disabled={!firstFailure}
+                title={firstFailure ? "Scroll to the first failed step" : "No failed step in this Run"}
+              >
+                Jump to failure
+              </button>
+              <label className="trace-toggle-label">
+                <input
+                  type="checkbox"
+                  className="trace-toggle-input"
+                  checked={failuresOnly}
+                  onChange={(event) => setFailuresOnly(event.target.checked)}
+                />
+                <span className="trace-toggle-track">
+                  <span className="trace-toggle-thumb" />
+                </span>
+                <span>Failures only</span>
+              </label>
+            </div>
+          </div>
         )}
-        {trace && (
-          <span className="trace-session" title={trace.sessionId ?? undefined}>
-            {trace.sessionId ? "Session " + trace.sessionId.slice(0, 8) : "New session"}
-          </span>
-        )}
-        <button
-          className="trace-jump-button"
-          onClick={jumpToFailure}
-          disabled={!firstFailure}
-          title={firstFailure ? "Scroll to the first failed step" : "No failed step in this Run"}
-        >
-          Jump to failure
-        </button>
-        <label className="trace-filter">
-          <input
-            type="checkbox"
-            checked={failuresOnly}
-            onChange={(event) => setFailuresOnly(event.target.checked)}
-          />
-          Failures only
-        </label>
-        <button className="trace-panel-close" onClick={onClose} aria-label="Close trace">
-          ×
-        </button>
       </div>
       {loading && (
         <div className="trace-panel-loading">
@@ -236,6 +260,74 @@ function TracePanel({
             <TraceSpanTree nodes={visibleTree} depth={0} highlightId={highlightId} />
           )}
         </div>
+      )}
+    </section>
+  );
+}
+
+function runDuration(run: AgentRun): string {
+  if (!run.startedAt || !run.completedAt) return "…";
+  const ms = new Date(run.completedAt).getTime() - new Date(run.startedAt).getTime();
+  return ms < 1000 ? ms + "ms" : (ms / 1000).toFixed(1) + "s";
+}
+
+function RunsPanel({
+  runs,
+  loading,
+  error,
+  activeTraceRunId,
+  onViewTrace,
+  onClose,
+}: {
+  runs: AgentRun[];
+  loading: boolean;
+  error: string | null;
+  activeTraceRunId: string | null;
+  onViewTrace: (runId: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <section className="runs-panel">
+      <div className="runs-panel-header">
+        <div>
+          <span className="eyebrow">Run history</span>
+          <h3>Runs</h3>
+        </div>
+        <button className="trace-panel-close" onClick={onClose} aria-label="Close run history">
+          ×
+        </button>
+      </div>
+      {loading && (
+        <div className="trace-panel-loading">
+          <Spinner /> Loading runs…
+        </div>
+      )}
+      {error && <div className="error-banner" role="alert">{error}</div>}
+      {!loading && !error && (
+        <ul className="runs-list">
+          {runs.length === 0 ? (
+            <li className="trace-empty">No runs yet.</li>
+          ) : (
+            runs.map((run) => (
+              <li key={run.id}>
+                <button
+                  className={
+                    "runs-row" + (run.id === activeTraceRunId ? " runs-row-active" : "")
+                  }
+                  onClick={() => onViewTrace(run.id)}
+                >
+                  <span className={"trace-status-chip trace-status-chip-" + run.status}>
+                    <span className="trace-status-dot" />
+                    {run.status}
+                  </span>
+                  <span className="runs-row-prompt">{run.prompt}</span>
+                  <span className="runs-row-time">{formatTime(run.createdAt)}</span>
+                  <span className="runs-row-duration">{runDuration(run)}</span>
+                </button>
+              </li>
+            ))
+          )}
+        </ul>
       )}
     </section>
   );
@@ -260,18 +352,38 @@ export default function App() {
   const [traceLoading, setTraceLoading] = useState(false);
   const [traceError, setTraceError] = useState<string | null>(null);
   const [actorNameInput, setActorNameInput] = useState(() => getActorName());
+  // UI-only state — no effect on data flow
+  const [theme, setTheme] = useState<"light" | "dark">(
+    () => (localStorage.getItem("theme") as "light" | "dark") ?? "light",
+  );
+  const [pendingDelete, setPendingDelete] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const [showRuns, setShowRuns] = useState(false);
+  const [runsList, setRunsList] = useState<AgentRun[]>([]);
+  const [runsLoading, setRunsLoading] = useState(false);
+  const [runsError, setRunsError] = useState<string | null>(null);
+
   const messageEnd = useRef<HTMLDivElement>(null);
   const selectedIdRef = useRef<string | null>(null);
   const traceRunIdRef = useRef<string | null>(null);
+  const showRunsRef = useRef(false);
   const mountedRef = useRef(true);
   const pollingRunIds = useRef(new Set<string>());
+  const toastTimerRef = useRef<number | null>(null);
   selectedIdRef.current = selectedId;
   traceRunIdRef.current = traceRunId;
+  showRunsRef.current = showRuns;
 
   const selected = useMemo(
     () => agents.find((agent) => agent.id === selectedId) ?? null,
     [agents, selectedId],
   );
+
+  const showToast = useCallback((msg: string) => {
+    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
+    setToast(msg);
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 3000);
+  }, []);
 
   const refreshAgents = useCallback(async () => {
     const { agents: next } = await api.listAgents();
@@ -290,9 +402,22 @@ export default function App() {
     }
   }, []);
 
+  const refreshRuns = useCallback(async (agentId: string) => {
+    const result = await api.runs(agentId);
+    if (mountedRef.current && selectedIdRef.current === agentId) {
+      setRunsList(result.runs);
+    }
+  }, []);
+
   const bootstrap = useCallback(async () => {
     await Promise.all([refreshAgents(), api.system().then(setSystem)]);
   }, [refreshAgents]);
+
+  // Apply theme to document root whenever it changes
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("theme", theme);
+  }, [theme]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -315,6 +440,10 @@ export default function App() {
     setTraceRunId(null);
     setTrace(null);
     setTraceError(null);
+    setPendingDelete(false);
+    setShowRuns(false);
+    setRunsList([]);
+    setRunsError(null);
     if (!selectedId) {
       setMessages([]);
       return;
@@ -359,6 +488,7 @@ export default function App() {
       setSelectedId(agent.id);
       setShowCreate(false);
       setForm(emptyForm);
+      showToast("Agent created");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -375,6 +505,7 @@ export default function App() {
       await api.updateAgent(selected.id, form);
       await refreshAgents();
       setShowSettings(false);
+      showToast("Settings saved");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -384,15 +515,17 @@ export default function App() {
 
   const toggleAgent = async () => {
     if (!selected) return;
+    const wasStopped = selected.status === "stopped";
     setBusy(true);
     setError(null);
     try {
-      if (selected.status === "stopped") {
+      if (wasStopped) {
         await api.startAgent(selected.id);
       } else {
         await api.stopAgent(selected.id);
       }
       await refreshAgents();
+      showToast(wasStopped ? "Agent started" : "Agent stopped");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -402,18 +535,17 @@ export default function App() {
 
   const deleteAgent = async () => {
     if (!selected) return;
-    if (!window.confirm("Delete " + selected.name + "? Its workspace will be archived.")) {
-      return;
-    }
     setBusy(true);
     setError(null);
     try {
       await api.deleteAgent(selected.id);
       await refreshAgents();
+      showToast("Agent deleted");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setBusy(false);
+      setPendingDelete(false);
     }
   };
 
@@ -427,12 +559,40 @@ export default function App() {
         const result = await api.run(runId);
         if (selectedIdRef.current === agentId) setActiveRun(result.run);
         if (!["queued", "running"].includes(result.run.status)) {
-          await Promise.all([refreshMessages(agentId), refreshAgents()]);
+          await Promise.all([
+            refreshMessages(agentId),
+            refreshAgents(),
+            showRunsRef.current && selectedIdRef.current === agentId
+              ? refreshRuns(agentId)
+              : Promise.resolve(),
+          ]);
           return;
         }
       }
     } finally {
       pollingRunIds.current.delete(runId);
+    }
+  };
+
+  const toggleRuns = async () => {
+    if (!selected) return;
+    if (showRuns) {
+      setShowRuns(false);
+      return;
+    }
+    setShowRuns(true);
+    setRunsError(null);
+    setRunsLoading(true);
+    const agentId = selected.id;
+    try {
+      const result = await api.runs(agentId);
+      if (selectedIdRef.current === agentId) setRunsList(result.runs);
+    } catch (reason) {
+      if (selectedIdRef.current === agentId) {
+        setRunsError(reason instanceof Error ? reason.message : String(reason));
+      }
+    } finally {
+      if (selectedIdRef.current === agentId) setRunsLoading(false);
     }
   };
 
@@ -567,7 +727,7 @@ export default function App() {
             setShowCreate(true);
           }}
         >
-          <span>＋</span> Create Agent
+          <span>+</span> Create Agent
         </button>
 
         <div className="sidebar-label">
@@ -596,6 +756,15 @@ export default function App() {
             </div>
           )}
         </nav>
+
+        <button
+          className="theme-toggle"
+          onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
+          title="Toggle theme"
+        >
+          <span className="theme-toggle-icon">{theme === "dark" ? "☀" : "◑"}</span>
+          <span>{theme === "dark" ? "Light mode" : "Dark mode"}</span>
+        </button>
 
         <div className="runtime-card">
           <span className="eyebrow">Runtime</span>
@@ -643,6 +812,13 @@ export default function App() {
               </div>
               <div className="header-actions">
                 <button
+                  className={"button button-ghost" + (showRuns ? " button-active" : "")}
+                  onClick={toggleRuns}
+                  disabled={busy}
+                >
+                  Runs
+                </button>
+                <button
                   className="button button-ghost"
                   onClick={() => setShowSettings((value) => !value)}
                   disabled={busy || selected.status === "busy"}
@@ -656,15 +832,46 @@ export default function App() {
                 >
                   {selected.status === "stopped" ? "Start" : "Stop"}
                 </button>
-                <button
-                  className="button button-danger"
-                  onClick={deleteAgent}
-                  disabled={busy || selected.status === "busy"}
-                >
-                  Delete
-                </button>
+                {pendingDelete ? (
+                  <div className="confirm-inline">
+                    <span>Delete {selected.name}?</span>
+                    <button
+                      className="button button-danger"
+                      onClick={deleteAgent}
+                      disabled={busy}
+                    >
+                      {busy ? <Spinner /> : "Confirm"}
+                    </button>
+                    <button
+                      className="button button-ghost"
+                      onClick={() => setPendingDelete(false)}
+                      disabled={busy}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    className="button button-danger"
+                    onClick={() => setPendingDelete(true)}
+                    disabled={busy || selected.status === "busy"}
+                  >
+                    Delete
+                  </button>
+                )}
               </div>
             </header>
+
+            {showRuns && (
+              <RunsPanel
+                runs={runsList}
+                loading={runsLoading}
+                error={runsError}
+                activeTraceRunId={traceRunId}
+                onViewTrace={viewTrace}
+                onClose={() => setShowRuns(false)}
+              />
+            )}
 
             {showSettings && (
               <form className="settings-panel" onSubmit={saveAgent}>
@@ -940,6 +1147,13 @@ export default function App() {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {toast && (
+        <div className="toast" role="status">
+          <span className="toast-icon">✓</span>
+          {toast}
         </div>
       )}
     </div>

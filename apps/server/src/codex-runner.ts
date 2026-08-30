@@ -448,6 +448,13 @@ export class CodexRunner implements AgentRunner {
       "NO_PROXY",
       "NODE_EXTRA_CA_CERTS",
       "TERM",
+      "SystemRoot",
+      "windir",
+      "ComSpec",
+      "PATHEXT",
+      "USERPROFILE",
+      "TEMP",
+      "TMP",
     ] as const;
     const environment: NodeJS.ProcessEnv = {
       CODEX_HOME: this.config.codexHome,
